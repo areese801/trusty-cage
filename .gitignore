@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Virtual environment
+venv/
+
+# Environment / secrets
+.env
+
+# IDE
+.idea/
+.vscode/
+.zed/
+
+# OS
+.DS_Store
+
+# pytest
+.pytest_cache/
+
+# trusty-cage working files
+TODO.md
