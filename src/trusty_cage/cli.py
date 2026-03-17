@@ -274,6 +274,34 @@ def attach(
             user=constants.CONTAINER_USER,
             env=exec_env,
         )
+        # Launch programs in windows
+        container_exec(
+            meta.container_name,
+            [
+                "tmux",
+                "send-keys",
+                "-t",
+                f"{constants.TMUX_SESSION}:editor",
+                f"nvim {constants.CONTAINER_PROJECT_DIR}",
+                "Enter",
+            ],
+            user=constants.CONTAINER_USER,
+            env=exec_env,
+        )
+        container_exec(
+            meta.container_name,
+            [
+                "tmux",
+                "send-keys",
+                "-t",
+                f"{constants.TMUX_SESSION}:claude",
+                "claude --dangerously-skip-permissions",
+                "Enter",
+            ],
+            user=constants.CONTAINER_USER,
+            env=exec_env,
+        )
+
         # Select first window
         container_exec(
             meta.container_name,

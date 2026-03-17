@@ -52,9 +52,8 @@ pytest tests/test_foo.py::test_bar    # single test
 
 ```
 ~/.trusty-cage/
-  config.toml          # User config (dotfiles repo, Python version, shell)
+  .env                 # Optional user config (env vars, not created by tool)
   image.sha            # SHA of Dockerfile for rebuild detection
-  Dockerfile           # Copied from package on first run
   envs/<name>/
     meta.json          # Source of truth: repo_url, created_at, volume_name, host_clone_path, auth_mode
     repo/              # Full host clone with remotes (for export)

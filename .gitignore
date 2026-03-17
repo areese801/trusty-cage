@@ -22,5 +22,13 @@ venv/
 # pytest
 .pytest_cache/
 
+# Ruff
+.ruff_cache/
+
+# Docker image export artifacts
+info/
+isolated-dev-*/
+trusty-cage:*/
+
 # trusty-cage working files
 TODO.md

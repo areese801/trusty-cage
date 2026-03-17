@@ -62,7 +62,7 @@ def apply_dotfiles(container_name: str, dotfiles_repo: str) -> None:
         )
 
         # Run install script if present
-        install_scripts = ["install.sh", "install", "setup.sh", "setup"]
+        install_scripts = ["install.sh", "install", "setup.sh", "setup", "bootstrap.sh"]
         for script_name in install_scripts:
             result = container_exec(
                 container_name,
