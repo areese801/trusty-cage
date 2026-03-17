@@ -17,7 +17,12 @@ class TestLoadConfig:
         load_config returns defaults when no env vars or .env file exist.
         """
         # Clear any env vars that might be set
-        for key in [ENV_DOTFILES_REPO, ENV_PYTHON_VERSION, ENV_DEFAULT_SHELL, ENV_DEFAULT_AUTH_MODE]:
+        for key in [
+            ENV_DOTFILES_REPO,
+            ENV_PYTHON_VERSION,
+            ENV_DEFAULT_SHELL,
+            ENV_DEFAULT_AUTH_MODE,
+        ]:
             monkeypatch.delenv(key, raising=False)
 
         config = load_config()
@@ -38,11 +43,16 @@ class TestLoadConfig:
         """
         Values in .env file are used when env vars aren't set.
         """
-        for key in [ENV_DOTFILES_REPO, ENV_PYTHON_VERSION, ENV_DEFAULT_SHELL, ENV_DEFAULT_AUTH_MODE]:
+        for key in [
+            ENV_DOTFILES_REPO,
+            ENV_PYTHON_VERSION,
+            ENV_DEFAULT_SHELL,
+            ENV_DEFAULT_AUTH_MODE,
+        ]:
             monkeypatch.delenv(key, raising=False)
 
         dotenv_path = mock_trusty_cage_dir / ".env"
-        dotenv_path.write_text(f'{ENV_DOTFILES_REPO}=https://github.com/user/dots\n')
+        dotenv_path.write_text(f"{ENV_DOTFILES_REPO}=https://github.com/user/dots\n")
 
         config = load_config()
         assert config[ENV_DOTFILES_REPO] == "https://github.com/user/dots"
@@ -52,7 +62,7 @@ class TestLoadConfig:
         A real env var beats a .env file value.
         """
         dotenv_path = mock_trusty_cage_dir / ".env"
-        dotenv_path.write_text(f'{ENV_PYTHON_VERSION}=3.11\n')
+        dotenv_path.write_text(f"{ENV_PYTHON_VERSION}=3.11\n")
         monkeypatch.setenv(ENV_PYTHON_VERSION, "3.13")
 
         config = load_config()

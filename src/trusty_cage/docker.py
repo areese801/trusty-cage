@@ -128,6 +128,7 @@ def container_exec(
     env: dict[str, str] | None = None,
     capture: bool = True,
     interactive: bool = False,
+    check: bool = True,
 ) -> subprocess.CompletedProcess[str]:
     """
     Execute a command inside a running container.
@@ -142,7 +143,7 @@ def container_exec(
             args.extend(["-e", f"{k}={v}"])
     args.append(name)
     args.extend(command)
-    return _run(args, capture=capture)
+    return _run(args, capture=capture, check=check)
 
 
 def exec_replace(

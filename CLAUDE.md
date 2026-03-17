@@ -84,6 +84,12 @@ Chosen at `create` time, stored in `meta.json`:
 - **api_key**: Reads host env var at attach time, injected via `docker exec -e`
 - **subscription**: Copies `~/.claude/` into container via `docker cp` at create time; persists in volume
 
+## Code Conventions
+
+### Imports
+- All imports must be at the top of the file — no inline or lazy imports inside functions
+- This applies to all Python files in the project
+
 ## Key Design Constraints
 
 - `meta.json` is the source of truth for environment state — never infer from Docker state alone
