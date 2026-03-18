@@ -97,6 +97,14 @@ def create_meta(
     return meta
 
 
+def save_meta(meta: MetaJson) -> None:
+    """
+    Persist an updated MetaJson to disk.
+    """
+    meta_path = get_env_dir(meta.name) / "meta.json"
+    meta_path.write_text(json.dumps(meta.to_dict(), indent=2))
+
+
 def load_meta(name: str) -> MetaJson:
     """
     Load MetaJson from disk. Raises FileNotFoundError if missing.
