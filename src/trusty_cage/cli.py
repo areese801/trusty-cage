@@ -312,7 +312,6 @@ def attach(
         )
         left_pane = pane_base
         top_right = pane_base + 1
-        bottom_right = pane_base + 2
 
         # Split horizontally: left (nvim) | right
         container_exec(
