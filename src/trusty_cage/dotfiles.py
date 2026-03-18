@@ -60,7 +60,9 @@ def apply_dotfiles(container_name: str, dotfiles_repo: str) -> None:
         # Remove broken symlinks (docker cp rejects them)
         for p in source_dir.rglob("*"):
             if p.is_symlink() and not p.resolve().exists():
-                rprint(f"[dim]Removing broken symlink: {p.relative_to(source_dir)}[/dim]")
+                rprint(
+                    f"[dim]Removing broken symlink: {p.relative_to(source_dir)}[/dim]"
+                )
                 p.unlink()
 
         # Copy into container home
