@@ -188,7 +188,7 @@ def create(
     )
     container_exec(
         meta.container_name,
-        ["git", "init"],
+        ["git", "init", "-b", "main"],
         user=constants.CONTAINER_USER,
     )
     container_exec(
