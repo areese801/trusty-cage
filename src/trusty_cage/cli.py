@@ -81,8 +81,8 @@ def create(
     """
     _require_docker()
 
-    # Derive or validate name
-    env_name = name if name else derive_name(git_repo_url)
+    # Derive or validate name (always lowercase for Docker compatibility)
+    env_name = name.lower() if name else derive_name(git_repo_url)
     if env_exists(env_name):
         rprint(f"[bold red]Error: Environment '{env_name}' already exists.[/bold red]")
         raise typer.Exit(1)
