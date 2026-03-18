@@ -45,6 +45,7 @@ from trusty_cage.environment import (
     get_env_dir,
     list_envs as get_all_envs,
     load_meta,
+    save_meta,
 )
 from trusty_cage.image import build_if_needed, rebuild
 from trusty_cage.network import apply_network_policy
@@ -80,8 +81,8 @@ def create(
     """
     _require_docker()
 
-    # Derive or validate name
-    env_name = name if name else derive_name(git_repo_url)
+    # Derive or validate name (always lowercase for Docker compatibility)
+    env_name = name.lower() if name else derive_name(git_repo_url)
     if env_exists(env_name):
         rprint(f"[bold red]Error: Environment '{env_name}' already exists.[/bold red]")
         raise typer.Exit(1)
@@ -188,7 +189,7 @@ def create(
     )
     container_exec(
         meta.container_name,
-        ["git", "init"],
+        ["git", "init", "-b", "main"],
         user=constants.CONTAINER_USER,
     )
     container_exec(
@@ -311,7 +312,6 @@ def attach(
         )
         left_pane = pane_base
         top_right = pane_base + 1
-        bottom_right = pane_base + 2
 
         # Split horizontally: left (nvim) | right
         container_exec(
@@ -376,6 +376,60 @@ def attach(
         ["tmux", "attach-session", "-t", constants.TMUX_SESSION],
         env=exec_env,
     )
+
+
+@app.command()
+def auth(
+    name: str = typer.Argument(help="Name of the environment"),
+    mode: Optional[str] = typer.Option(
+        None, "--mode", help="Set auth mode: api_key or subscription"
+    ),
+) -> None:
+    """
+    View or change an environment's authentication mode.
+    """
+    _require_docker()
+
+    if not env_exists(name):
+        rprint(f"[bold red]Error: Environment '{name}' not found.[/bold red]")
+        raise typer.Exit(1)
+
+    meta = load_meta(name)
+
+    if mode is None:
+        rprint(f"Environment '{name}' auth mode: [cyan]{meta.auth_mode}[/cyan]")
+        return
+
+    if mode not in ("api_key", "subscription"):
+        rprint(
+            f"[bold red]Error: Invalid mode '{mode}'. Use 'api_key' or 'subscription'.[/bold red]"
+        )
+        raise typer.Exit(1)
+
+    if mode == meta.auth_mode:
+        rprint(f"[dim]Already using {mode} mode.[/dim]")
+        return
+
+    if mode == "subscription":
+        if not validate_subscription_credentials():
+            rprint(
+                "[bold red]Error: ~/.claude/ not found. Run 'claude login' first.[/bold red]"
+            )
+            raise typer.Exit(1)
+
+        # Ensure container is running for docker cp
+        if not container_is_running(meta.container_name):
+            container_start(meta.container_name)
+
+        copy_subscription_credentials(meta.container_name)
+        rprint("[dim]Copied subscription credentials into container.[/dim]")
+
+    meta.auth_mode = mode
+    save_meta(meta)
+    rprint(f"[bold green]Switched '{name}' to {mode} mode.[/bold green]")
+
+    if mode == "api_key":
+        rprint("[dim]API key will be injected at next attach.[/dim]")
 
 
 @app.command()

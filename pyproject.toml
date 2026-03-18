@@ -23,6 +23,7 @@ dev = [
 
 [project.scripts]
 trusty-cage = "trusty_cage.cli:app"
+tc = "trusty_cage.cli:app"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/trusty_cage"]
