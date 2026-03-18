@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Virtual environment
+venv/
+
+# Environment / secrets
+.env
+
+# IDE
+.idea/
+.vscode/
+.zed/
+
+# OS
+.DS_Store
+
+# pytest
+.pytest_cache/
+
+# Ruff
+.ruff_cache/
+
+# Docker image export artifacts
+info/
+isolated-dev-*/
+trusty-cage:*/
+
+# trusty-cage working files
+TODO.md

@@ -45,7 +45,7 @@ The problem is that these flags are genuinely dangerous on a host machine. An ag
 
 ```
 ~/.trusty-cage/
-  config.toml          # User config (dotfiles repo URL, Python version, etc.)
+  .env                 # Optional user config (env vars, not created by tool)
   envs/
     <env-name>/
       meta.json        # Repo URL, creation date, Docker volume name, host clone path
@@ -66,20 +66,35 @@ A single Python CLI package, installable via `pip install -e .` or `pipx`, provi
 
 ## Configuration
 
-`~/.trusty-cage/config.toml`:
+Configuration is resolved in this order (highest priority first):
 
-```toml
-dotfiles_repo = "https://github.com/youruser/dotfiles"  # HTTPS, read-only clone
-python_version = "3.12"
-default_shell = "zsh"
+1. **CLI flags** — per-invocation overrides (e.g. `--python-version 3.13`)
+2. **Environment variables** — set in the shell or exported in a profile
+3. **`~/.trusty-cage/.env`** — persistent local defaults (git-ignored, user-managed)
+4. **Built-in defaults** — sensible fallbacks
 
-# Claude Code authentication -- see Authentication section below
-# auth_mode is set per-environment at create time; this sets the default
-default_auth_mode = "api_key"        # "api_key" or "subscription"
-anthropic_api_key_env = "ANTHROPIC_API_KEY"  # Name of host env var to read (api_key mode only)
+### Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `TRUSTY_CAGE_DOTFILES_REPO` | *(empty)* | HTTPS URL of dotfiles repo to clone into containers |
+| `TRUSTY_CAGE_PYTHON_VERSION` | `3.12` | Python version installed via pyenv in the container |
+| `TRUSTY_CAGE_DEFAULT_SHELL` | `zsh` | Default shell inside the container |
+| `TRUSTY_CAGE_DEFAULT_AUTH_MODE` | `api_key` | Authentication mode: `api_key` or `subscription` |
+| `ANTHROPIC_API_KEY` | *(none)* | API key for Claude Code (required for `api_key` auth mode) |
+
+### `.env` file
+
+Users can create `~/.trusty-cage/.env` to set persistent defaults:
+
+```bash
+TRUSTY_CAGE_DOTFILES_REPO=https://github.com/youruser/dotfiles
+TRUSTY_CAGE_PYTHON_VERSION=3.12
+TRUSTY_CAGE_DEFAULT_SHELL=zsh
+TRUSTY_CAGE_DEFAULT_AUTH_MODE=api_key
 ```
 
-All values have sensible defaults. The tool creates this file with defaults on first run if it does not exist, then prompts the user to review it.
+The `.env` file is loaded automatically via `python-dotenv` but never created or modified by the tool. It is the user's responsibility to create and maintain it.
 
 ---
 
@@ -288,7 +303,7 @@ Read-only git access over HTTPS (e.g. `git clone https://github.com/org/repo`) i
 
 ```
 ~/.trusty-cage/
-  config.toml
+  .env                             # Optional user config (env vars, not created by tool)
   image.sha                        # SHA of Dockerfile, used to detect when rebuild is needed
   Dockerfile                       # Copied here from the tool package on first run
   envs/
