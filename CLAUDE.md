@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **trusty-cage** is a host-side Python CLI tool that creates fully isolated, persistent Docker-based development environments on macOS (via OrbStack). Each environment is scoped to a single git repo, contains no git credentials, and provides an interactive dev experience (tmux + Neovim/LazyVim + Claude Code) inside a container. Work is exported back to the host for git operations.
 
-The full specification is in `trusty-cage-spec.md`.
+v1 is feature-complete. The archived v1 specification is at `docs/v1-spec.md`. Planned enhancements are in `v2-spec.md`.
 
 ## Build & Development
 
@@ -37,6 +37,8 @@ pytest tests/test_foo.py::test_bar    # single test
 - All Docker operations via **subprocess calls to `docker` CLI** (not the Docker Python SDK)
 
 ### CLI Commands
+
+The CLI is available as `trusty-cage` or the short alias `tc`.
 
 | Command | Purpose |
 |---|---|
@@ -88,6 +90,12 @@ Chosen at `create` time, stored in `meta.json`:
 ### Imports
 - All imports must be at the top of the file — no inline or lazy imports inside functions
 - This applies to all Python files in the project
+
+## Git Workflow
+
+- Work happens on feature branches off `develop`
+- Merges to `main` are done via PR on GitHub — never merge locally
+- Push the feature/develop branch and open a PR
 
 ## Key Design Constraints
 

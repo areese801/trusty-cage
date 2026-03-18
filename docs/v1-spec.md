@@ -1,4 +1,6 @@
-# trusty-cage — Specification
+# trusty-cage — v1 Specification (Archived)
+
+> **This is the archived v1 specification.** v1 is feature-complete. For current project guidance, see `CLAUDE.md`. For planned enhancements, see `v2-spec.md`.
 
 ## Overview
 
@@ -51,7 +53,7 @@ The problem is that these flags are genuinely dangerous on a host machine. An ag
       meta.json        # Repo URL, creation date, Docker volume name, host clone path
 ```
 
-A single Python CLI package, installable via `pip install -e .` or `pipx`, providing the `trusty-cage` command.
+A single Python CLI package, installable via `pip install -e .` or `pipx`, providing the `trusty-cage` command (also available as `tc` for convenience).
 
 ### Container side
 
@@ -193,10 +195,10 @@ Attaches to an existing environment's interactive tmux session.
 1. Starts the container if stopped (`docker start`)
 2. Applies the iptables network policy (run as root inside container, then drops to `trustycage` user) -- idempotent, safe to re-apply
 3. Checks whether a tmux session named `dev` already exists inside the container
-4. If not: creates a new tmux session with a standard layout:
-   - Window 1 (`editor`): Neovim/LazyVim opened at `/home/trustycage/project/`
-   - Window 2 (`claude`): shell ready for `claude --dangerously-skip-permissions`
-   - Window 3 (`shell`): plain shell
+4. If not: creates a new tmux session with a 3-pane layout in a single window:
+   - Left pane (60%): Neovim/LazyVim opened at `/home/trustycage/project/`
+   - Top-right pane: `claude --dangerously-skip-permissions`
+   - Bottom-right pane: plain shell
 5. Attaches via `docker exec -it isolated-dev-<name> tmux attach -t dev`
 
 ---
@@ -305,12 +307,13 @@ Read-only git access over HTTPS (e.g. `git clone https://github.com/org/repo`) i
 ~/.trusty-cage/
   .env                             # Optional user config (env vars, not created by tool)
   image.sha                        # SHA of Dockerfile, used to detect when rebuild is needed
-  Dockerfile                       # Copied here from the tool package on first run
   envs/
     myrepo/
-      meta.json                    # { repo_url, created_at, volume_name, host_clone_path }
+      meta.json                    # { repo_url, created_at, volume_name, host_clone_path, auth_mode }
       repo/                        # Full host clone with remotes intact (for export)
 ```
+
+> **Note:** The Dockerfile is bundled in the Python package at `trusty_cage/assets/Dockerfile`, not copied to `~/.trusty-cage/`.
 
 ---
 
@@ -323,7 +326,7 @@ Read-only git access over HTTPS (e.g. `git clone https://github.com/org/repo`) i
 - `meta.json` is the source of truth for environment state -- always read from it, never infer from Docker state alone
 - The tool should **never** run `git push` or configure git credentials on behalf of the user -- all write operations to remotes are the user's responsibility on the host
 - iptables rules in `init-network.sh` should use `-C` to check before adding (idempotent)
-- The Dockerfile should use a **non-root user** (`dev`, UID 1000) as the default. The network init script is the only thing that needs root, and it should `exec su dev` at the end.
+- The Dockerfile should use a **non-root user** (`trustycage`, UID 1000) as the default. The network init script is the only thing that needs root, and it should drop to the `trustycage` user at the end.
 
 ---
 
