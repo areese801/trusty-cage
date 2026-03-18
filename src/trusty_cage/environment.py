@@ -49,9 +49,9 @@ def derive_name(url: str) -> str:
     if path.endswith(".git"):
         path = path[:-4]
     name = path.rsplit("/", 1)[-1]
-    # Sanitize: keep only alphanumeric, hyphens, underscores
+    # Sanitize: lowercase, keep only alphanumeric, hyphens, underscores
     name = re.sub(r"[^a-zA-Z0-9_-]", "-", name)
-    return name
+    return name.lower()
 
 
 def get_env_dir(name: str) -> Path:

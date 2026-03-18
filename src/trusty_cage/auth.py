@@ -21,17 +21,27 @@ def prompt_auth_mode(default: str = "api_key") -> str:
     Interactively prompt the user to choose an authentication mode.
     Returns 'api_key' or 'subscription'.
     """
+    modes = ["api_key", "subscription"]
+    descriptions = {
+        "api_key": "Inject ANTHROPIC_API_KEY at attach time",
+        "subscription": "Copy ~/.claude/ credentials into container",
+    }
+    default_num = str(modes.index(default) + 1)
+
     rprint("\n[bold]Authentication mode:[/bold]")
-    rprint(
-        "  [cyan]api_key[/cyan]      — Inject ANTHROPIC_API_KEY at attach time (default)"
-    )
-    rprint("  [cyan]subscription[/cyan] — Copy ~/.claude/ credentials into container\n")
+    for i, mode in enumerate(modes, 1):
+        marker = " (default)" if mode == default else ""
+        rprint(f"  [cyan]{i}[/cyan]) {mode} — {descriptions[mode]}{marker}")
+    rprint()
 
     choice = Prompt.ask(
         "Choose auth mode",
-        choices=["api_key", "subscription"],
-        default=default,
+        choices=["1", "2", "api_key", "subscription"],
+        default=default_num,
     )
+
+    if choice in ("1", "2"):
+        return modes[int(choice) - 1]
     return choice
 
 

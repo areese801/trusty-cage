@@ -100,22 +100,25 @@ def create(
     python_version = resolve(constants.ENV_PYTHON_VERSION)
     build_if_needed(python_version=python_version)
 
-    # Git clone to host
+    # Git clone to host (reuse existing clone if present from a prior destroy)
     env_dir = get_env_dir(env_name)
+    env_dir.mkdir(parents=True, exist_ok=True)
     host_clone = env_dir / "repo"
-    host_clone.mkdir(parents=True, exist_ok=True)
 
-    rprint(f"[bold blue]Cloning {git_repo_url}...[/bold blue]")
-    try:
-        subprocess.run(
-            ["git", "clone", git_repo_url, str(host_clone)],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except subprocess.CalledProcessError as e:
-        rprint(f"[bold red]Git clone failed: {e.stderr.strip()}[/bold red]")
-        raise typer.Exit(1)
+    if host_clone.exists() and any(host_clone.iterdir()):
+        rprint(f"[dim]Reusing existing host clone at {host_clone}[/dim]")
+    else:
+        rprint(f"[bold blue]Cloning {git_repo_url}...[/bold blue]")
+        try:
+            subprocess.run(
+                ["git", "clone", git_repo_url, str(host_clone)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as e:
+            rprint(f"[bold red]Git clone failed: {e.stderr.strip()}[/bold red]")
+            raise typer.Exit(1)
 
     # Write meta.json
     meta = create_meta(
@@ -134,6 +137,7 @@ def create(
         image=constants.IMAGE_TAG,
         volume_mount=volume_mount,
         hostname=env_name,
+        cap_add=["NET_ADMIN"],
     )
     container_start(meta.container_name)
     rprint(f"[dim]Created and started container {meta.container_name}[/dim]")
@@ -172,6 +176,16 @@ def create(
     )
 
     # Init local git inside container (no remotes)
+    container_exec(
+        meta.container_name,
+        ["git", "config", "--global", "user.name", "trusty-cage"],
+        user=constants.CONTAINER_USER,
+    )
+    container_exec(
+        meta.container_name,
+        ["git", "config", "--global", "user.email", "trusty-cage@localhost"],
+        user=constants.CONTAINER_USER,
+    )
     container_exec(
         meta.container_name,
         ["git", "init"],
@@ -233,9 +247,11 @@ def attach(
     if meta.auth_mode == "api_key":
         try:
             exec_env = inject_api_key(meta.api_key_env)
-        except ValueError as e:
-            rprint(f"[bold red]Error: {e}[/bold red]")
-            raise typer.Exit(1)
+        except ValueError:
+            rprint(
+                f"[bold yellow]Warning: {meta.api_key_env} is not set. "
+                "Claude Code will not have an API key in this session.[/bold yellow]"
+            )
 
     # Check if tmux session exists
     tmux_check = container_exec(
@@ -247,54 +263,93 @@ def attach(
     )
 
     if tmux_check.returncode != 0:
-        # Create 3-window layout: editor, claude, shell
+        # Append tmux prefix override (avoids conflict with host tmux)
+        tmux_prefix = resolve(constants.ENV_TMUX_PREFIX)
         container_exec(
             meta.container_name,
             [
+                "bash",
+                "-c",
+                f'echo "\n# trusty-cage: use a different prefix inside the container\n'
+                f"# so it doesn't conflict with the host tmux prefix (Ctrl-b)\n"
+                f"unbind C-b\nset -g prefix {tmux_prefix}\n"
+                f'bind {tmux_prefix} send-prefix" '
+                f">> {constants.CONTAINER_HOME}/.tmux.conf",
+            ],
+            user=constants.CONTAINER_USER,
+        )
+
+        # Create 3-pane layout: nvim (left 60%) | claude (top-right) | shell (bottom-right)
+        sess = constants.TMUX_SESSION
+        proj = constants.CONTAINER_PROJECT_DIR
+
+        # New session — starts with one pane (will be nvim)
+        container_exec(
+            meta.container_name,
+            ["tmux", "new-session", "-d", "-s", sess, "-c", proj],
+            user=constants.CONTAINER_USER,
+            env=exec_env,
+        )
+
+        # Query pane-base-index (user's tmux config may set it to 1)
+        pbi_result = container_exec(
+            meta.container_name,
+            [
                 "tmux",
-                "new-session",
-                "-d",
-                "-s",
-                constants.TMUX_SESSION,
-                "-n",
-                "editor",
+                "show-options",
+                "-gv",
+                "pane-base-index",
             ],
             user=constants.CONTAINER_USER,
             env=exec_env,
+            check=False,
         )
+        pane_base = (
+            int(pbi_result.stdout.strip())
+            if pbi_result.returncode == 0 and pbi_result.stdout.strip().isdigit()
+            else 0
+        )
+        left_pane = pane_base
+        top_right = pane_base + 1
+        bottom_right = pane_base + 2
+
+        # Split horizontally: left (nvim) | right
         container_exec(
             meta.container_name,
-            ["tmux", "new-window", "-t", f"{constants.TMUX_SESSION}", "-n", "claude"],
+            ["tmux", "split-window", "-h", "-t", sess, "-c", proj],
             user=constants.CONTAINER_USER,
             env=exec_env,
         )
+        # Split right pane vertically: top-right (claude) | bottom-right (shell)
         container_exec(
             meta.container_name,
-            ["tmux", "new-window", "-t", f"{constants.TMUX_SESSION}", "-n", "shell"],
+            ["tmux", "split-window", "-v", "-t", sess, "-c", proj],
             user=constants.CONTAINER_USER,
             env=exec_env,
         )
-        # Launch programs in windows
+        # Resize left pane to 60%
+        container_exec(
+            meta.container_name,
+            ["tmux", "resize-pane", "-t", f"{sess}:.{left_pane}", "-x", "60%"],
+            user=constants.CONTAINER_USER,
+            env=exec_env,
+        )
+
+        # Left pane: nvim
+        container_exec(
+            meta.container_name,
+            ["tmux", "send-keys", "-t", f"{sess}:.{left_pane}", "nvim", "Enter"],
+            user=constants.CONTAINER_USER,
+            env=exec_env,
+        )
+        # Top-right pane: claude
         container_exec(
             meta.container_name,
             [
                 "tmux",
                 "send-keys",
                 "-t",
-                f"{constants.TMUX_SESSION}:editor",
-                f"nvim {constants.CONTAINER_PROJECT_DIR}",
-                "Enter",
-            ],
-            user=constants.CONTAINER_USER,
-            env=exec_env,
-        )
-        container_exec(
-            meta.container_name,
-            [
-                "tmux",
-                "send-keys",
-                "-t",
-                f"{constants.TMUX_SESSION}:claude",
+                f"{sess}:.{top_right}",
                 "claude --dangerously-skip-permissions",
                 "Enter",
             ],
@@ -302,10 +357,10 @@ def attach(
             env=exec_env,
         )
 
-        # Select first window
+        # Focus on claude pane (top-right)
         container_exec(
             meta.container_name,
-            ["tmux", "select-window", "-t", f"{constants.TMUX_SESSION}:0"],
+            ["tmux", "select-pane", "-t", f"{sess}:.{top_right}"],
             user=constants.CONTAINER_USER,
             env=exec_env,
         )

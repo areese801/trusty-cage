@@ -17,18 +17,18 @@ from trusty_cage.environment import (
 
 class TestDeriveName:
     def test_https_url(self):
-        assert derive_name("https://github.com/octocat/Hello-World") == "Hello-World"
+        assert derive_name("https://github.com/octocat/Hello-World") == "hello-world"
 
     def test_url_with_git_suffix(self):
         assert (
-            derive_name("https://github.com/octocat/Hello-World.git") == "Hello-World"
+            derive_name("https://github.com/octocat/Hello-World.git") == "hello-world"
         )
 
     def test_ssh_url(self):
-        assert derive_name("git@github.com:octocat/Hello-World.git") == "Hello-World"
+        assert derive_name("git@github.com:octocat/Hello-World.git") == "hello-world"
 
     def test_trailing_slash(self):
-        assert derive_name("https://github.com/octocat/Hello-World/") == "Hello-World"
+        assert derive_name("https://github.com/octocat/Hello-World/") == "hello-world"
 
     def test_sanitizes_special_chars(self):
         assert derive_name("https://example.com/user/my repo!") == "my-repo-"

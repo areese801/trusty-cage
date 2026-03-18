@@ -16,21 +16,49 @@ pip install -e .
 
 ```bash
 # Create an environment from any git repo
-trusty-cage create https://github.com/org/myrepo
+trusty-cage create https://github.com/octocat/Hello-World
 
-# You're now inside a tmux session with:
+# You're now inside a tmux session (prefix: Ctrl-a) with:
 #   Window 1 (editor)  — Neovim at the project root
 #   Window 2 (claude)  — Claude Code running with --dangerously-skip-permissions
 #   Window 3 (shell)   — plain shell
 
-# When done, detach from tmux (Ctrl-b d), then export your work:
-trusty-cage export myrepo
+# Switch windows with Ctrl-a <number>, detach with Ctrl-a d
+
+# When done, export your work back to the host:
+trusty-cage export hello-world
 
 # Review and push from the host clone:
-cd ~/.trusty-cage/envs/myrepo/repo/
+cd ~/.trusty-cage/envs/hello-world/repo/
 git diff
 git add -A && git commit -m "work from trusty-cage"
 git push
+```
+
+## Example: Hello World
+
+```bash
+# Create (environment name is derived as lowercase: "hello-world")
+trusty-cage create https://github.com/octocat/Hello-World --no-attach
+
+# Verify
+trusty-cage list
+docker ps -a | grep isolated-dev
+
+# Attach — drops you into tmux inside the container
+trusty-cage attach hello-world
+
+# Inside the container:
+#   Ctrl-a w          — list tmux windows
+#   git remote -v     — empty (no remotes, by design)
+#   curl example.com  — works (outbound web allowed)
+#   Ctrl-a d          — detach
+
+# Export work back to host
+trusty-cage export hello-world
+
+# Clean up
+trusty-cage destroy hello-world
 ```
 
 ## Commands
@@ -55,13 +83,17 @@ Configuration is resolved in order: CLI flags > environment variables > `~/.trus
 | `TRUSTY_CAGE_PYTHON_VERSION` | `3.12` | Python version installed via pyenv |
 | `TRUSTY_CAGE_DEFAULT_SHELL` | `zsh` | Default shell inside the container |
 | `TRUSTY_CAGE_DEFAULT_AUTH_MODE` | `api_key` | Auth mode: `api_key` or `subscription` |
+| `TRUSTY_CAGE_TMUX_PREFIX` | `C-a` | tmux prefix key inside containers (default `Ctrl-a` to avoid conflict with host `Ctrl-b`) |
 
-Create `~/.trusty-cage/.env` to set persistent defaults:
+To set persistent defaults, copy the example file to `~/.trusty-cage/.env`:
 
 ```bash
-TRUSTY_CAGE_DOTFILES_REPO=https://github.com/youruser/dotfiles
-TRUSTY_CAGE_PYTHON_VERSION=3.12
+mkdir -p ~/.trusty-cage
+cp .env.example ~/.trusty-cage/.env
+# edit ~/.trusty-cage/.env with your values
 ```
+
+**Important:** The `.env` file must live at `~/.trusty-cage/.env`, not at the project root. This keeps your config independent of where you cloned the repo and persists across reinstalls.
 
 ## Authentication
 

@@ -40,14 +40,32 @@ def apply_dotfiles(container_name: str, dotfiles_repo: str) -> None:
             text=True,
         )
 
-        # Strip .git/
+        # Strip .git/ and git submodule dirs
         git_dir = clone_dir / ".git"
         if git_dir.exists():
             shutil.rmtree(git_dir)
 
+        # Detect GNU Stow layout: if a "common/" subdirectory exists with
+        # dotfiles (hidden files/dirs), copy from there instead of the root.
+        # This handles repos structured as ~/.dotfiles/common/.tmux.conf etc.
+        stow_dir = clone_dir / "common"
+        if stow_dir.is_dir() and any(
+            p.name.startswith(".") for p in stow_dir.iterdir()
+        ):
+            source_dir = stow_dir
+            rprint("[dim]Detected GNU Stow layout, copying from common/[/dim]")
+        else:
+            source_dir = clone_dir
+
+        # Remove broken symlinks (docker cp rejects them)
+        for p in source_dir.rglob("*"):
+            if p.is_symlink() and not p.resolve().exists():
+                rprint(f"[dim]Removing broken symlink: {p.relative_to(source_dir)}[/dim]")
+                p.unlink()
+
         # Copy into container home
         home = constants.CONTAINER_HOME
-        copy_to_container(str(clone_dir) + "/.", container_name, home)
+        copy_to_container(str(source_dir) + "/.", container_name, home)
 
         # chown
         container_exec(

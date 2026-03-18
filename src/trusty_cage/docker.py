@@ -37,7 +37,7 @@ def _run(
         )
     except subprocess.CalledProcessError as e:
         raise DockerError(
-            f"docker {' '.join(args)} failed (exit {e.returncode}): {e.stderr.strip()}",
+            f"docker {' '.join(args)} failed (exit {e.returncode}): {(e.stderr or '').strip()}",
             returncode=e.returncode,
         ) from e
 
@@ -108,6 +108,7 @@ def container_create(
     image: str,
     volume_mount: str | None = None,
     hostname: str | None = None,
+    cap_add: list[str] | None = None,
 ) -> None:
     """
     Create (but don't start) a container.
@@ -117,6 +118,9 @@ def container_create(
         args.extend(["-v", volume_mount])
     if hostname:
         args.extend(["--hostname", hostname])
+    if cap_add:
+        for cap in cap_add:
+            args.extend(["--cap-add", cap])
     args.append(image)
     _run(args)
 
