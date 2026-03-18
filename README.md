@@ -12,6 +12,8 @@ source venv/bin/activate
 pip install -e .
 ```
 
+`tc` is available as a shorthand for `trusty-cage` (e.g. `tc create ...`, `tc attach ...`).
+
 ## Quick Start
 
 ```bash
