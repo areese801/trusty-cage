@@ -104,6 +104,20 @@ Chosen at `create` time, stored in `meta.json`:
 - Merges to `main` are done via PR on GitHub — never merge locally
 - Push the feature/develop branch and open a PR
 
+## Versioning
+
+This project follows [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PATCH`
+
+- **MAJOR** — breaking changes (renamed commands, changed config format, dropped features)
+- **MINOR** — new features, backwards-compatible (new commands, new config options)
+- **PATCH** — bug fixes, docs-only changes, no behavior change
+
+Version is set in two places (keep in sync):
+- `pyproject.toml` → `version`
+- `src/trusty_cage/__init__.py` → `__version__`
+
+**When to prompt about version bumps:** Before committing work that adds new features (minor bump) or fixes bugs (patch bump), suggest the appropriate version increment to the user. Don't bump automatically — ask first.
+
 ## Key Design Constraints
 
 - `meta.json` is the source of truth for environment state — never infer from Docker state alone
