@@ -11,7 +11,7 @@ license = "MIT"
 requires-python = ">=3.11"
 keywords = ["docker", "development", "isolation", "ai", "agents", "claude", "containers"]
 authors = [
-    { name = "Andrew Reese" },
+    { name = "Adam Reese" },
 ]
 classifiers = [
     "Development Status :: 5 - Production/Stable",

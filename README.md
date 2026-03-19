@@ -28,7 +28,7 @@ trusty-cage create https://github.com/octocat/Hello-World
 # You're now inside a tmux session (prefix: Ctrl-a) with:
 #   Left pane (60%)  — Neovim at the project root
 #   Top-right pane   — Claude Code running with --dangerously-skip-permissions
-#   Bottom-right     — plain shell
+#   Bottom-right pane — plain shell
 
 # Switch panes with Ctrl-a <arrow>, detach with Ctrl-a d
 
@@ -92,6 +92,7 @@ Configuration is resolved in order: CLI flags > environment variables > `~/.trus
 | `TRUSTY_CAGE_DEFAULT_SHELL` | `zsh` | Default shell inside the container |
 | `TRUSTY_CAGE_DEFAULT_AUTH_MODE` | `api_key` | Auth mode: `api_key` or `subscription` |
 | `TRUSTY_CAGE_TMUX_PREFIX` | `C-a` | tmux prefix key inside containers (default `Ctrl-a` to avoid conflict with host `Ctrl-b`) |
+| `ANTHROPIC_API_KEY` | *(none)* | API key for Claude Code (required for `api_key` auth mode) |
 
 Run `trusty-cage init` to create `~/.trusty-cage/.env` with a commented template you can customize.
 
@@ -125,6 +126,7 @@ Protection is enforced by **credential absence**, not network blocking. The cont
 - macOS with OrbStack or Docker Desktop
 - Python 3.11+
 - Git
+- rsync (pre-installed on macOS; used by `export`)
 
 ## Development
 
