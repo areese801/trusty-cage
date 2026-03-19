@@ -29,6 +29,10 @@ trusty-cage create https://github.com/octocat/Hello-World
 #   Left pane (60%)  — Neovim at the project root
 #   Top-right pane   — Claude Code running with --dangerously-skip-permissions
 #   Bottom-right pane — plain shell
+#
+# If you configured TRUSTY_CAGE_DOTFILES_REPO, your shell config, aliases,
+# tmux settings, and Neovim config are already applied — the container
+# should feel like your own machine.
 
 # Switch panes with Ctrl-a <arrow>, detach with Ctrl-a d
 
@@ -40,7 +44,64 @@ cd ~/.trusty-cage/envs/hello-world/repo/
 git diff
 git add -A && git commit -m "work from trusty-cage"
 git push
+
+# Or copy into an existing clone (don't forget the trailing /):
+cd ~/projects/hello-world
+cp -R ~/.trusty-cage/envs/hello-world/repo/ .
 ```
+
+## Demo
+
+Here's a real workflow using trusty-cage to build an [Obsidian plugin](https://github.com/areese801/obsidian-todoist) from scratch.
+
+### 1. Give instructions inside the cage
+
+![Inside the cage — giving Claude Code instructions](https://raw.githubusercontent.com/areese801/trusty-cage/main/.images/trusty-cage-inside-instructions.png)
+
+The terminal title bar shows the `tc create` command that built this environment. Inside, Claude Code runs with full autonomy (`bypass permissions on`) in a tmux session alongside Neovim. The container's git repo has **no remotes** — the agent can commit locally but has no way to push anywhere.
+
+### 2. Let the agent work autonomously
+
+![Claude Code working autonomously](https://raw.githubusercontent.com/areese801/trusty-cage/main/.images/trusty-cage-inside-auto-work.png)
+
+Claude Code explored a reference project, designed an architecture, wrote the full plugin (TypeScript, settings UI, API client, parser), and committed everything — all without any human intervention. The agent had full control inside the container: installing packages, creating files, running builds. If anything went wrong, the host machine would be completely unaffected.
+
+### 3. Export and review on the host
+
+![Exporting work back to the host](https://raw.githubusercontent.com/areese801/trusty-cage/main/.images/trusty-cage-outside-export-work.png)
+
+Back on the host, `tc export` copies the container's work into the host clone at `~/.trusty-cage/envs/<name>/repo/`. From there, you review the diff, commit, and push — the human stays in the loop for all git operations that touch a remote.
+
+**To work from the exported repository:**
+
+```bash
+cd ~/.trusty-cage/envs/obsidian-todoist/repo/
+git diff
+git add -A && git commit -m "work from trusty-cage"
+git push
+```
+
+**To copy exported code into your own cloned repository:**
+
+If you already have the repo cloned elsewhere (e.g. `~/projects/personal/obsidian-todoist`), you can copy the exported files into it instead. Make sure you're `cd`'d into your clone first, and **don't forget the trailing `/`** on the source path — on macOS (BSD `cp`), the trailing `/` copies the *contents* of the directory rather than the directory itself:
+
+```bash
+cd ~/projects/personal/obsidian-todoist
+cp -R ~/.trusty-cage/envs/obsidian-todoist/repo/ .
+git status   # review what changed
+git diff
+git add -A && git commit -m "work from trusty-cage"
+git push
+```
+
+**Linux note:** GNU `cp` ignores the trailing `/` and always copies the directory itself. On Linux, use `cp -RT` or `rsync -a` instead:
+
+```bash
+cp -RT ~/.trusty-cage/envs/obsidian-todoist/repo .
+rsync -a ~/.trusty-cage/envs/obsidian-todoist/repo/ .
+```
+
+> The `Permission denied` errors on `.git/objects/pack` files are expected and harmless — your host `.git/` is preserved and those locked pack files don't need to be overwritten.
 
 ## Example: Hello World
 
