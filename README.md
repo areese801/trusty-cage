@@ -5,11 +5,13 @@ Isolated Docker-based development environments for AI coding agents. Run Claude 
 ## Installation
 
 ```bash
-git clone https://github.com/youruser/trusty-cage.git
-cd trusty-cage
-python -m venv venv
-source venv/bin/activate
-pip install -e .
+pip install trusty-cage
+```
+
+Or with [pipx](https://pipx.pypa.io/) for isolated CLI installs:
+
+```bash
+pipx install trusty-cage
 ```
 
 `tc` is available as a shorthand for `trusty-cage` (e.g. `tc create ...`, `tc attach ...`).
@@ -17,15 +19,18 @@ pip install -e .
 ## Quick Start
 
 ```bash
+# One-time setup: create config directory and default .env file
+trusty-cage init
+
 # Create an environment from any git repo
 trusty-cage create https://github.com/octocat/Hello-World
 
 # You're now inside a tmux session (prefix: Ctrl-a) with:
-#   Window 1 (editor)  — Neovim at the project root
-#   Window 2 (claude)  — Claude Code running with --dangerously-skip-permissions
-#   Window 3 (shell)   — plain shell
+#   Left pane (60%)  — Neovim at the project root
+#   Top-right pane   — Claude Code running with --dangerously-skip-permissions
+#   Bottom-right pane — plain shell
 
-# Switch windows with Ctrl-a <number>, detach with Ctrl-a d
+# Switch panes with Ctrl-a <arrow>, detach with Ctrl-a d
 
 # When done, export your work back to the host:
 trusty-cage export hello-world
@@ -51,7 +56,7 @@ docker ps -a | grep isolated-dev
 trusty-cage attach hello-world
 
 # Inside the container:
-#   Ctrl-a w          — list tmux windows
+#   Ctrl-a <arrow>    — switch tmux panes
 #   git remote -v     — empty (no remotes, by design)
 #   curl example.com  — works (outbound web allowed)
 #   Ctrl-a d          — detach
@@ -67,6 +72,7 @@ trusty-cage destroy hello-world
 
 | Command | Description |
 |---|---|
+| `trusty-cage init [--force]` | Create config directory and default `.env` file |
 | `trusty-cage create <url> [--name NAME] [--no-attach]` | Create a new environment from a git repo |
 | `trusty-cage attach <name>` | Attach to an existing environment |
 | `trusty-cage stop <name>` | Stop a container (preserves work) |
@@ -86,16 +92,17 @@ Configuration is resolved in order: CLI flags > environment variables > `~/.trus
 | `TRUSTY_CAGE_DEFAULT_SHELL` | `zsh` | Default shell inside the container |
 | `TRUSTY_CAGE_DEFAULT_AUTH_MODE` | `api_key` | Auth mode: `api_key` or `subscription` |
 | `TRUSTY_CAGE_TMUX_PREFIX` | `C-a` | tmux prefix key inside containers (default `Ctrl-a` to avoid conflict with host `Ctrl-b`) |
+| `ANTHROPIC_API_KEY` | *(none)* | API key for Claude Code (required for `api_key` auth mode) |
 
-To set persistent defaults, copy the example file to `~/.trusty-cage/.env`:
+Run `trusty-cage init` to create `~/.trusty-cage/.env` with a commented template you can customize.
 
-```bash
-mkdir -p ~/.trusty-cage
-cp .env.example ~/.trusty-cage/.env
-# edit ~/.trusty-cage/.env with your values
-```
+## Dotfiles
 
-**Important:** The `.env` file must live at `~/.trusty-cage/.env`, not at the project root. This keeps your config independent of where you cloned the repo and persists across reinstalls.
+If you set `TRUSTY_CAGE_DOTFILES_REPO`, your dotfiles are automatically applied to every new container at `create` time. The repo is cloned on the host, `.git/` is stripped, and the files are copied into the container's home directory. If an install script is found (`install.sh`, `setup.sh`, `bootstrap.sh`, etc.), it runs automatically. GNU Stow layouts are detected and handled (files are copied from `common/` if present).
+
+This means your shell config, tmux settings, Neovim config, aliases, and other personalizations carry over — the container feels like your own machine.
+
+**Without dotfiles**, the container ships with sensible defaults: oh-my-zsh (robbyrussell theme), LazyVim starter config, pyenv on PATH, and `vim`/`vi` aliased to `nvim`. Everything works out of the box, just without your personal customizations.
 
 ## Authentication
 
@@ -127,6 +134,20 @@ Protection is enforced by **credential absence**, not network blocking. The cont
 - macOS with OrbStack or Docker Desktop
 - Python 3.11+
 - Git
+- rsync (pre-installed on macOS; used by `export`)
+
+## Development
+
+```bash
+git clone https://github.com/areese801/trusty-cage.git
+cd trusty-cage
+python -m venv venv
+source venv/bin/activate
+pip install -e ".[dev]"
+
+# Available make targets
+make help
+```
 
 ## License
 

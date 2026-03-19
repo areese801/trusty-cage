@@ -27,6 +27,12 @@ ruff check --fix .
 pytest
 pytest tests/test_foo.py              # single file
 pytest tests/test_foo.py::test_bar    # single test
+
+# Build & publish (requires build + twine in dev deps)
+make build          # Build wheel and sdist
+make publish-test   # Upload to TestPyPI
+make publish        # Upload to PyPI
+make help           # Show all targets
 ```
 
 ## Architecture
@@ -42,6 +48,7 @@ The CLI is available as `trusty-cage` or the short alias `tc`.
 
 | Command | Purpose |
 |---|---|
+| `init [--force]` | Create config directory and default `.env` file |
 | `create <git-repo-url> [--name] [--no-attach]` | Clone repo, build image, create container+volume, copy files in, init local git, apply dotfiles, attach |
 | `attach <name>` | Start container if stopped, apply iptables, create/attach tmux session |
 | `stop <name>` | Stop container (preserves volume) |
@@ -54,7 +61,7 @@ The CLI is available as `trusty-cage` or the short alias `tc`.
 
 ```
 ~/.trusty-cage/
-  .env                 # Optional user config (env vars, not created by tool)
+  .env                 # User config (created by `trusty-cage init`)
   image.sha            # SHA of Dockerfile for rebuild detection
   envs/<name>/
     meta.json          # Source of truth: repo_url, created_at, volume_name, host_clone_path, auth_mode
@@ -97,6 +104,20 @@ Chosen at `create` time, stored in `meta.json`:
 - Merges to `main` are done via PR on GitHub — never merge locally
 - Push the feature/develop branch and open a PR
 
+## Versioning
+
+This project follows [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PATCH`
+
+- **MAJOR** — breaking changes (renamed commands, changed config format, dropped features)
+- **MINOR** — new features, backwards-compatible (new commands, new config options)
+- **PATCH** — bug fixes, docs-only changes, no behavior change
+
+Version is set in two places (keep in sync):
+- `pyproject.toml` → `version`
+- `src/trusty_cage/__init__.py` → `__version__`
+
+**When to prompt about version bumps:** Before committing work that adds new features (minor bump) or fixes bugs (patch bump), suggest the appropriate version increment to the user. Don't bump automatically — ask first.
+
 ## Key Design Constraints
 
 - `meta.json` is the source of truth for environment state — never infer from Docker state alone
@@ -104,4 +125,4 @@ Chosen at `create` time, stored in `meta.json`:
 - The tool must **never** run `git push` or configure git credentials
 - Container's local git repo has no remotes — Claude Code uses git locally only
 - Export uses rsync to overlay container files onto host clone, preserving host's `.git/`
-- Package structure should be kept clean for future PyPI distribution
+- Published on PyPI as `trusty-cage` — installable via `pip install trusty-cage` or `pipx install trusty-cage`
