@@ -96,6 +96,14 @@ Configuration is resolved in order: CLI flags > environment variables > `~/.trus
 
 Run `trusty-cage init` to create `~/.trusty-cage/.env` with a commented template you can customize.
 
+## Dotfiles
+
+If you set `TRUSTY_CAGE_DOTFILES_REPO`, your dotfiles are automatically applied to every new container at `create` time. The repo is cloned on the host, `.git/` is stripped, and the files are copied into the container's home directory. If an install script is found (`install.sh`, `setup.sh`, `bootstrap.sh`, etc.), it runs automatically. GNU Stow layouts are detected and handled (files are copied from `common/` if present).
+
+This means your shell config, tmux settings, Neovim config, aliases, and other personalizations carry over — the container feels like your own machine.
+
+**Without dotfiles**, the container ships with sensible defaults: oh-my-zsh (robbyrussell theme), LazyVim starter config, pyenv on PATH, and `vim`/`vi` aliased to `nvim`. Everything works out of the box, just without your personal customizations.
+
 ## Authentication
 
 Chosen at `create` time:
