@@ -7,10 +7,10 @@ build: clean ## Build wheel and sdist
 	python -m build
 
 publish: build ## Build and upload to PyPI
-	twine upload dist/*
+	. ./set_creds.sh && twine upload dist/*
 
 publish-test: build ## Build and upload to TestPyPI
-	twine upload --repository testpypi dist/*
+	. ./set_creds.sh && twine upload --repository testpypi dist/*
 
 lint: ## Run ruff check
 	ruff check .

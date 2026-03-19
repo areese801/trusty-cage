@@ -10,6 +10,7 @@ venv/
 
 # Environment / secrets
 .env
+set_creds.sh
 
 # IDE
 .idea/
