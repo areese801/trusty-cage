@@ -6,9 +6,9 @@ Planned enhancements beyond the feature-complete v1. Each item is a candidate fo
 
 ## Planned Enhancements
 
-### PyPI Distribution
+### ~~PyPI Distribution~~ (Done)
 
-Publish to PyPI so users can install via `pip install trusty-cage` or `pipx install trusty-cage`. The package structure is already clean for this.
+Published as `trusty-cage` on PyPI. Install via `pip install trusty-cage` or `pipx install trusty-cage`. Includes `trusty-cage init` command for first-run configuration.
 
 ### Multi-Language Runtime Support
 

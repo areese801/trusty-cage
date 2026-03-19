@@ -2,6 +2,7 @@
 CLI entry point for trusty-cage.
 """
 
+import importlib.resources
 import shutil
 import subprocess
 import tempfile
@@ -63,6 +64,30 @@ def _require_docker() -> None:
     if not is_docker_running():
         rprint("[bold red]Error: Docker is not running.[/bold red]")
         raise typer.Exit(1)
+
+
+@app.command()
+def init(
+    force: bool = typer.Option(False, "--force", help="Overwrite existing .env file"),
+) -> None:
+    """
+    Initialize trusty-cage config directory and default .env file.
+    """
+    config_dir = constants.TRUSTY_CAGE_DIR
+    env_path = constants.DOTENV_PATH
+
+    config_dir.mkdir(parents=True, exist_ok=True)
+
+    if env_path.exists() and not force:
+        rprint(f"[dim]{env_path} already exists. Use --force to overwrite.[/dim]")
+        return
+
+    assets = importlib.resources.files("trusty_cage.assets")
+    template = assets.joinpath("env.template").read_text()
+    env_path.write_text(template)
+
+    rprint(f"[bold green]Created {env_path}[/bold green]")
+    rprint("[dim]Edit it to set your dotfiles repo, Python version, etc.[/dim]")
 
 
 @app.command()
@@ -363,9 +388,7 @@ def attach(
             user=constants.CONTAINER_USER,
             env=exec_env,
         )
-        rprint(
-            "[dim]Created tmux session with 3 panes (editor, claude, shell).[/dim]"
-        )
+        rprint("[dim]Created tmux session with 3 panes (editor, claude, shell).[/dim]")
 
     rprint(f"[bold green]Attaching to '{name}'...[/bold green]")
 
@@ -375,7 +398,6 @@ def attach(
         ["tmux", "attach-session", "-t", constants.TMUX_SESSION],
         env=exec_env,
     )
-
 
 
 @app.command()

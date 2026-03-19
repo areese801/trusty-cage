@@ -4,11 +4,27 @@ build-backend = "hatchling.build"
 
 [project]
 name = "trusty-cage"
-version = "0.1.0"
+version = "1.0.0"
 description = "Isolated Docker-based development environments for AI coding agents"
-readme = {text = "Isolated Docker-based development environments for AI coding agents", content-type = "text/plain"}
+readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
+keywords = ["docker", "development", "isolation", "ai", "agents", "claude", "containers"]
+authors = [
+    { name = "Andrew Reese" },
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development",
+]
 dependencies = [
     "typer[all]>=0.12",
     "python-dotenv>=1.0",
@@ -19,7 +35,14 @@ dev = [
     "pytest>=8.0",
     "pytest-mock>=3.12",
     "ruff>=0.4",
+    "build",
+    "twine",
 ]
+
+[project.urls]
+Homepage = "https://github.com/areese801/trusty-cage"
+Repository = "https://github.com/areese801/trusty-cage"
+Issues = "https://github.com/areese801/trusty-cage/issues"
 
 [project.scripts]
 trusty-cage = "trusty_cage.cli:app"
