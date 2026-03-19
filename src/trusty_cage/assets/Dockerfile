@@ -15,6 +15,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ripgrep \
     fd-find \
     fzf \
+    tree \
+    cloc \
+    jq \
+    htop \
     build-essential \
     iptables \
     sudo \
