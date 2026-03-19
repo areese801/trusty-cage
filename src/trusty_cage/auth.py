@@ -7,6 +7,8 @@ Supports two modes:
 """
 
 import os
+import shutil
+import tempfile
 from pathlib import Path
 
 from rich import print as rprint
@@ -90,7 +92,14 @@ def copy_subscription_credentials(container_name: str) -> None:
         )
 
     dest = f"{constants.CONTAINER_HOME}/.claude"
-    copy_to_container(str(claude_dir) + "/.", container_name, dest)
+
+    # Copy to a temp dir with symlinks dereferenced so docker cp doesn't choke
+    # on symlinks (e.g. GNU Stow-managed dotfiles).
+    with tempfile.TemporaryDirectory() as tmp:
+        resolved = Path(tmp) / ".claude"
+        shutil.copytree(claude_dir, resolved, symlinks=False)
+        copy_to_container(str(resolved) + "/.", container_name, dest)
+
     container_exec(
         container_name,
         ["chown", "-R", f"{constants.CONTAINER_USER}:{constants.CONTAINER_USER}", dest],

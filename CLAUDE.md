@@ -100,9 +100,14 @@ Chosen at `create` time, stored in `meta.json`:
 
 ## Git Workflow
 
-- Work happens on feature branches off `develop`
+- Work happens on feature branches off `main`
 - Merges to `main` are done via PR on GitHub — never merge locally
-- Push the feature/develop branch and open a PR
+- Push the feature branch and open a PR
+
+## Release Workflow
+
+- Always merge to `main` via PR **before** publishing to PyPI
+- Never publish to PyPI from an unmerged branch
 
 ## Versioning
 
