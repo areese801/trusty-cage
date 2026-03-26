@@ -192,10 +192,10 @@ Protection is enforced by **credential absence**, not network blocking. The cont
 
 ## Requirements
 
-- macOS with OrbStack or Docker Desktop
+- Docker (Docker Desktop, OrbStack, or Docker Engine)
 - Python 3.11+
 - Git
-- rsync (pre-installed on macOS; used by `export`)
+- rsync (pre-installed on macOS and most Linux distros; used by `export`)
 
 ## Development
 
