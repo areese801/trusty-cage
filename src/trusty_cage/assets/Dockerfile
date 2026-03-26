@@ -4,6 +4,7 @@ ARG PYTHON_VERSION=3.12
 
 # Avoid interactive prompts during package install
 ENV DEBIAN_FRONTEND=noninteractive
+ENV TRUSTY_CAGE=1
 
 # System packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
