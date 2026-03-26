@@ -30,6 +30,9 @@ ENV_DEFAULT_SHELL = "TRUSTY_CAGE_DEFAULT_SHELL"
 ENV_DEFAULT_AUTH_MODE = "TRUSTY_CAGE_DEFAULT_AUTH_MODE"
 ENV_TMUX_PREFIX = "TRUSTY_CAGE_TMUX_PREFIX"
 
+# Valid auth modes
+AUTH_MODES = ("api_key", "subscription")
+
 # Defaults (used when neither env var nor .env provides a value)
 DEFAULTS = {
     ENV_DOTFILES_REPO: "",

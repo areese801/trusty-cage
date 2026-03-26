@@ -99,6 +99,9 @@ def create(
     no_attach: bool = typer.Option(
         False, "--no-attach", help="Create without attaching"
     ),
+    auth_mode: Optional[str] = typer.Option(
+        None, "--auth-mode", help="Authentication mode: api_key or subscription"
+    ),
 ) -> None:
     """
     Create a new isolated development environment from a git repo.
@@ -111,9 +114,17 @@ def create(
         rprint(f"[bold red]Error: Environment '{env_name}' already exists.[/bold red]")
         raise typer.Exit(1)
 
-    # Prompt for auth mode
-    default_auth = resolve(constants.ENV_DEFAULT_AUTH_MODE)
-    auth_mode = prompt_auth_mode(default=default_auth)
+    # Resolve auth mode: use flag if provided, otherwise prompt
+    if auth_mode:
+        if auth_mode not in constants.AUTH_MODES:
+            rprint(
+                f"[bold red]Error: Invalid auth mode '{auth_mode}'. "
+                f"Must be one of: {', '.join(constants.AUTH_MODES)}[/bold red]"
+            )
+            raise typer.Exit(1)
+    else:
+        default_auth = resolve(constants.ENV_DEFAULT_AUTH_MODE)
+        auth_mode = prompt_auth_mode(default=default_auth)
 
     if auth_mode == "subscription" and not validate_subscription_credentials():
         rprint(
@@ -458,6 +469,7 @@ def list_envs() -> None:
 @app.command()
 def export(
     name: str = typer.Argument(help="Name of the environment to export"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
 ) -> None:
     """
     Export work from container back to host clone.
@@ -470,7 +482,9 @@ def export(
 
     meta = load_meta(name)
 
-    if not Confirm.ask(f"Export container files to {meta.host_clone_path}?"):
+    if not yes and not Confirm.ask(
+        f"Export container files to {meta.host_clone_path}?"
+    ):
         rprint("[dim]Cancelled.[/dim]")
         return
 
@@ -525,6 +539,7 @@ def export(
 @app.command()
 def destroy(
     name: str = typer.Argument(help="Name of the environment to destroy"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
 ) -> None:
     """
     Destroy an environment's container and volume (keeps host clone).
@@ -537,7 +552,7 @@ def destroy(
 
     meta = load_meta(name)
 
-    if not Confirm.ask(
+    if not yes and not Confirm.ask(
         f"Destroy environment '{name}'? Container and volume will be removed."
     ):
         rprint("[dim]Cancelled.[/dim]")
