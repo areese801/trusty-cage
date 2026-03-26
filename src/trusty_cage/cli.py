@@ -3,6 +3,7 @@ CLI entry point for trusty-cage.
 """
 
 import importlib.resources
+import json
 import shutil
 import subprocess
 import tempfile
@@ -14,7 +15,7 @@ from rich import print as rprint
 from rich.prompt import Confirm
 from rich.table import Table
 
-from trusty_cage import constants
+from trusty_cage import __version__, constants
 from trusty_cage.auth import (
     copy_subscription_credentials,
     inject_api_key,
@@ -52,9 +53,29 @@ from trusty_cage.network import apply_network_policy
 
 app = typer.Typer(
     name="trusty-cage",
-    help="Isolated Docker-based development environments for AI coding agents.",
     no_args_is_help=True,
 )
+
+
+def _version_callback(value: bool) -> None:
+    if value:
+        print(f"trusty-cage {__version__}")
+        raise typer.Exit()
+
+
+@app.callback()
+def main(
+    version: bool = typer.Option(
+        False,
+        "--version",
+        callback=_version_callback,
+        is_eager=True,
+        help="Show version and exit.",
+    ),
+) -> None:
+    """
+    Isolated Docker-based development environments for AI coding agents.
+    """
 
 
 def _require_docker() -> None:
@@ -435,11 +456,43 @@ def stop(
 
 
 @app.command("list")
-def list_envs() -> None:
+def list_envs(
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+) -> None:
     """
     List all environments with status, creation date, and repo URL.
     """
     envs = get_all_envs()
+
+    if json_output:
+        if not envs:
+            print("[]")
+            return
+
+        entries = []
+        for meta in envs:
+            try:
+                running = container_is_running(meta.container_name)
+                status = "running" if running else "stopped"
+            except Exception:
+                status = "unknown"
+
+            created = (
+                meta.created_at[:10] if len(meta.created_at) >= 10 else meta.created_at
+            )
+            entries.append(
+                {
+                    "name": meta.name,
+                    "status": status,
+                    "repo_url": meta.repo_url,
+                    "created_at": created,
+                    "auth_mode": meta.auth_mode,
+                }
+            )
+
+        print(json.dumps(entries, indent=2))
+        return
+
     if not envs:
         rprint("[dim]No environments found.[/dim]")
         return
@@ -467,9 +520,27 @@ def list_envs() -> None:
 
 
 @app.command()
+def exists(
+    name: str = typer.Argument(help="Name of the environment to check"),
+) -> None:
+    """
+    Check if an environment exists. Exit code 0 if yes, 1 if no.
+    """
+    if env_exists(name):
+        raise typer.Exit(0)
+    else:
+        raise typer.Exit(1)
+
+
+@app.command()
 def export(
     name: str = typer.Argument(help="Name of the environment to export"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+    output_dir: Optional[str] = typer.Option(
+        None,
+        "--output-dir",
+        help="Export to this directory instead of the default host clone",
+    ),
 ) -> None:
     """
     Export work from container back to host clone.
@@ -482,9 +553,18 @@ def export(
 
     meta = load_meta(name)
 
-    if not yes and not Confirm.ask(
-        f"Export container files to {meta.host_clone_path}?"
-    ):
+    # Resolve export target
+    if output_dir:
+        export_target = Path(output_dir).resolve()
+        if not export_target.is_dir():
+            rprint(
+                f"[bold red]Error: Output directory does not exist: {export_target}[/bold red]"
+            )
+            raise typer.Exit(1)
+    else:
+        export_target = Path(meta.host_clone_path)
+
+    if not yes and not Confirm.ask(f"Export container files to {export_target}?"):
         rprint("[dim]Cancelled.[/dim]")
         return
 
@@ -508,8 +588,7 @@ def export(
         if exported_git.exists():
             shutil.rmtree(exported_git)
 
-        # rsync into host clone, preserving host's .git/
-        host_clone = Path(meta.host_clone_path)
+        # rsync into export target, preserving .git/
         subprocess.run(
             [
                 "rsync",
@@ -518,7 +597,7 @@ def export(
                 "--exclude",
                 ".git/",
                 str(export_dir) + "/",
-                str(host_clone) + "/",
+                str(export_target) + "/",
             ],
             check=True,
             capture_output=True,
@@ -528,9 +607,9 @@ def export(
     if was_stopped:
         container_stop(meta.container_name)
 
-    rprint(f"[bold green]Exported to {meta.host_clone_path}[/bold green]")
+    rprint(f"[bold green]Exported to {export_target}[/bold green]")
     rprint("[dim]Suggested workflow:[/dim]")
-    rprint(f"  cd {meta.host_clone_path}")
+    rprint(f"  cd {export_target}")
     rprint("  git diff")
     rprint("  git add -A && git commit -m 'work from trusty-cage'")
     rprint("  git push")

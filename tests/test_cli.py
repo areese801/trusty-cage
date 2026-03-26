@@ -2,10 +2,12 @@
 Tests for CLI commands via Typer CliRunner.
 """
 
+import json
 import subprocess
 
 from typer.testing import CliRunner
 
+from trusty_cage import __version__
 from trusty_cage.cli import app
 
 runner = CliRunner()
@@ -285,6 +287,98 @@ class TestRebuildImageCommand:
         result = runner.invoke(app, ["rebuild-image"])
         assert result.exit_code != 0
         assert "Docker" in result.output
+
+
+class TestVersionFlag:
+    def test_version_output(self):
+        result = runner.invoke(app, ["--version"])
+        assert result.exit_code == 0
+        assert f"trusty-cage {__version__}" in result.output
+
+
+class TestListJsonFlag:
+    def test_list_json_empty(self, mock_trusty_cage_dir):
+        result = runner.invoke(app, ["list", "--json"])
+        assert result.exit_code == 0
+        assert json.loads(result.output) == []
+
+    def test_list_json_with_envs(self, mocker, mock_trusty_cage_dir):
+        from trusty_cage.environment import create_meta
+
+        create_meta(name="env-a", repo_url="https://a.com/r", auth_mode="api_key")
+        create_meta(name="env-b", repo_url="https://b.com/r", auth_mode="subscription")
+
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+
+        result = runner.invoke(app, ["list", "--json"])
+        assert result.exit_code == 0
+        entries = json.loads(result.output)
+        assert len(entries) == 2
+        names = {e["name"] for e in entries}
+        assert names == {"env-a", "env-b"}
+        for entry in entries:
+            assert set(entry.keys()) == {
+                "name",
+                "status",
+                "repo_url",
+                "created_at",
+                "auth_mode",
+            }
+            assert entry["status"] == "running"
+
+
+class TestExistsCommand:
+    def test_exists_returns_0_when_env_exists(self, mock_trusty_cage_dir):
+        from trusty_cage.environment import create_meta
+
+        create_meta(name="myenv", repo_url="https://a.com/r", auth_mode="api_key")
+
+        result = runner.invoke(app, ["exists", "myenv"])
+        assert result.exit_code == 0
+        assert result.output == ""
+
+    def test_exists_returns_1_when_env_missing(self, mock_trusty_cage_dir):
+        result = runner.invoke(app, ["exists", "nonexistent"])
+        assert result.exit_code == 1
+        assert result.output == ""
+
+
+class TestExportOutputDir:
+    def test_export_with_output_dir(self, mocker, mock_trusty_cage_dir, tmp_path):
+        from trusty_cage.environment import create_meta
+
+        create_meta(name="myenv", repo_url="https://a.com/r", auth_mode="api_key")
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+        mocker.patch(f"{CLI}.copy_from_container")
+        mock_rsync = mocker.patch(f"{CLI}.subprocess.run")
+
+        output_dir = tmp_path / "custom-export"
+        output_dir.mkdir()
+
+        result = runner.invoke(
+            app, ["export", "myenv", "--yes", "--output-dir", str(output_dir)]
+        )
+        assert result.exit_code == 0
+        assert "Exported" in result.output
+
+        # Verify rsync was called with the custom output dir
+        rsync_call = mock_rsync.call_args
+        rsync_cmd = rsync_call[0][0]
+        assert str(output_dir) + "/" == rsync_cmd[-1]
+
+    def test_export_with_nonexistent_output_dir(self, mocker, mock_trusty_cage_dir):
+        from trusty_cage.environment import create_meta
+
+        create_meta(name="myenv", repo_url="https://a.com/r", auth_mode="api_key")
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+
+        result = runner.invoke(
+            app,
+            ["export", "myenv", "--yes", "--output-dir", "/tmp/does-not-exist-xyz"],
+        )
+        assert result.exit_code == 1
+        assert "does not exist" in result.output
 
 
 class TestAttachCommand:
