@@ -389,3 +389,150 @@ class TestAttachCommand:
         result = runner.invoke(app, ["attach", "nonexistent"])
         assert result.exit_code != 0
         assert "not found" in result.output
+
+
+class TestAuthCommand:
+    def test_fails_when_env_not_found(self, mocker, mock_trusty_cage_dir):
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        result = runner.invoke(app, ["auth", "nonexistent"])
+        assert result.exit_code != 0
+        assert "not found" in result.output
+
+    def test_subscription_recopies_credentials(self, mocker, mock_trusty_cage_dir):
+        from trusty_cage.environment import create_meta
+
+        create_meta(name="myenv", repo_url="https://a.com/r", auth_mode="subscription")
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+        mock_copy = mocker.patch(f"{CLI}.copy_subscription_credentials")
+
+        result = runner.invoke(app, ["auth", "myenv"])
+        assert result.exit_code == 0
+        assert "refreshed" in result.output
+        mock_copy.assert_called_once()
+
+    def test_api_key_validates_env_var(self, mocker, monkeypatch, mock_trusty_cage_dir):
+        from trusty_cage.environment import create_meta
+
+        create_meta(name="myenv", repo_url="https://a.com/r", auth_mode="api_key")
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test123456")
+
+        result = runner.invoke(app, ["auth", "myenv"])
+        assert result.exit_code == 0
+        assert "sk-ant-t" in result.output
+
+    def test_api_key_login_flag_errors(self, mocker, monkeypatch, mock_trusty_cage_dir):
+        from trusty_cage.environment import create_meta
+
+        create_meta(name="myenv", repo_url="https://a.com/r", auth_mode="api_key")
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+
+        result = runner.invoke(app, ["auth", "myenv", "--login"])
+        assert result.exit_code != 0
+        assert "not applicable" in result.output
+
+
+class TestLaunchCommand:
+    def test_fails_when_env_not_found(self, mocker, mock_trusty_cage_dir):
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        result = runner.invoke(app, ["launch", "nonexistent", "--test"])
+        assert result.exit_code != 0
+        assert "not found" in result.output
+
+    def test_requires_prompt_or_test(self, mocker, mock_trusty_cage_dir):
+        from trusty_cage.environment import create_meta
+
+        create_meta(name="myenv", repo_url="https://a.com/r", auth_mode="subscription")
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+
+        result = runner.invoke(app, ["launch", "myenv"])
+        assert result.exit_code != 0
+        assert "--prompt" in result.output
+
+    def test_launch_test_runs_claude_version(self, mocker, mock_trusty_cage_dir):
+        from trusty_cage.environment import create_meta
+
+        create_meta(name="myenv", repo_url="https://a.com/r", auth_mode="subscription")
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+        mock_exec = mocker.patch(
+            f"{CLI}.container_exec",
+            return_value=subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="claude 1.0.0", stderr=""
+            ),
+        )
+
+        result = runner.invoke(app, ["launch", "myenv", "--test"])
+        assert result.exit_code == 0
+        assert "Claude available" in result.output
+        # Verify claude --version was called
+        cmd = mock_exec.call_args[0][1]
+        assert cmd == ["claude", "--version"]
+
+    def test_launch_with_prompt(self, mocker, mock_trusty_cage_dir):
+        from trusty_cage.environment import create_meta
+
+        create_meta(name="myenv", repo_url="https://a.com/r", auth_mode="subscription")
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+        mock_exec = mocker.patch(
+            f"{CLI}.container_exec",
+            return_value=subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="", stderr=""
+            ),
+        )
+
+        result = runner.invoke(app, ["launch", "myenv", "--prompt", "say hello"])
+        assert result.exit_code == 0
+        cmd = mock_exec.call_args[0][1]
+        assert "claude" in cmd
+        assert "-p" in cmd
+        assert "say hello" in cmd
+
+    def test_launch_api_key_injects_env(
+        self, mocker, monkeypatch, mock_trusty_cage_dir
+    ):
+        from trusty_cage.environment import create_meta
+
+        create_meta(name="myenv", repo_url="https://a.com/r", auth_mode="api_key")
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        mock_exec = mocker.patch(
+            f"{CLI}.container_exec",
+            return_value=subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="", stderr=""
+            ),
+        )
+
+        result = runner.invoke(app, ["launch", "myenv", "--prompt", "hello"])
+        assert result.exit_code == 0
+        call_kwargs = mock_exec.call_args[1]
+        assert "ANTHROPIC_API_KEY" in call_kwargs.get("env", {})
+
+    def test_launch_prompt_file(self, mocker, mock_trusty_cage_dir, tmp_path):
+        from trusty_cage.environment import create_meta
+
+        create_meta(name="myenv", repo_url="https://a.com/r", auth_mode="subscription")
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+        mock_exec = mocker.patch(
+            f"{CLI}.container_exec",
+            return_value=subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="", stderr=""
+            ),
+        )
+
+        prompt_file = tmp_path / "prompt.txt"
+        prompt_file.write_text("Build me a thing")
+
+        result = runner.invoke(
+            app, ["launch", "myenv", "--prompt-file", str(prompt_file)]
+        )
+        assert result.exit_code == 0
+        cmd = mock_exec.call_args[0][1]
+        assert "Build me a thing" in cmd

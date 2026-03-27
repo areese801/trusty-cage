@@ -18,6 +18,7 @@ from rich.table import Table
 from trusty_cage import __version__, constants
 from trusty_cage.auth import (
     copy_subscription_credentials,
+    get_auth_exec_env,
     inject_api_key,
     prompt_auth_mode,
     validate_subscription_credentials,
@@ -315,14 +316,13 @@ def attach(
 
     # Build env dict for API key injection
     exec_env: dict[str, str] = {}
-    if meta.auth_mode == "api_key":
-        try:
-            exec_env = inject_api_key(meta.api_key_env)
-        except ValueError:
-            rprint(
-                f"[bold yellow]Warning: {meta.api_key_env} is not set. "
-                "Claude Code will not have an API key in this session.[/bold yellow]"
-            )
+    try:
+        exec_env = get_auth_exec_env(meta)
+    except ValueError:
+        rprint(
+            f"[bold yellow]Warning: {meta.api_key_env} is not set. "
+            "Claude Code will not have an API key in this session.[/bold yellow]"
+        )
 
     # Check if tmux session exists
     tmux_check = container_exec(
@@ -691,3 +691,171 @@ def rebuild_image(
         is_custom=is_custom,
     )
     rprint("[bold green]Done.[/bold green]")
+
+
+@app.command()
+def auth(
+    name: str = typer.Argument(help="Name of the environment"),
+    login: bool = typer.Option(
+        False, "--login", help="Open interactive Claude session for /login"
+    ),
+) -> None:
+    """
+    Refresh or verify authentication credentials for an environment.
+    """
+    _require_docker()
+
+    if not env_exists(name):
+        rprint(f"[bold red]Error: Environment '{name}' not found.[/bold red]")
+        raise typer.Exit(1)
+
+    meta = load_meta(name)
+
+    # Start container if needed
+    if not container_is_running(meta.container_name):
+        rprint(f"[dim]Starting container {meta.container_name}...[/dim]")
+        container_start(meta.container_name)
+
+    if meta.auth_mode == "subscription":
+        copy_subscription_credentials(meta.container_name)
+        rprint("[bold green]Subscription credentials refreshed.[/bold green]")
+
+        if login:
+            rprint("[dim]Opening interactive Claude session for /login...[/dim]")
+            exec_replace(
+                meta.container_name,
+                ["claude"],
+            )
+    elif meta.auth_mode == "api_key":
+        if login:
+            rprint(
+                "[bold red]Error: --login is not applicable for api_key mode.[/bold red]"
+            )
+            raise typer.Exit(1)
+
+        try:
+            env = inject_api_key(meta.api_key_env)
+            key_value = env[meta.api_key_env]
+            masked = key_value[:8] + "..." if len(key_value) > 8 else "***"
+            rprint(f"[bold green]API key verified:[/bold green] {masked}")
+        except ValueError:
+            rprint(
+                f"[bold red]Error: {meta.api_key_env} is not set in your environment.[/bold red]"
+            )
+            raise typer.Exit(1)
+
+
+@app.command()
+def launch(
+    name: str = typer.Argument(help="Name of the environment"),
+    prompt: Optional[str] = typer.Option(
+        None, "--prompt", "-p", help="Prompt text to send to Claude"
+    ),
+    prompt_file: Optional[str] = typer.Option(
+        None, "--prompt-file", help="Read prompt from a file"
+    ),
+    test: bool = typer.Option(
+        False, "--test", help="Verify Claude can start (run claude --version)"
+    ),
+    background: bool = typer.Option(
+        False, "--background", help="Run in background, log to file"
+    ),
+) -> None:
+    """
+    Launch Claude Code inside a cage environment.
+    """
+    _require_docker()
+
+    if not env_exists(name):
+        rprint(f"[bold red]Error: Environment '{name}' not found.[/bold red]")
+        raise typer.Exit(1)
+
+    meta = load_meta(name)
+
+    # Validate exactly one mode
+    modes = sum([prompt is not None, prompt_file is not None, test])
+    if modes == 0:
+        rprint(
+            "[bold red]Error: Provide --prompt, --prompt-file, or --test.[/bold red]"
+        )
+        raise typer.Exit(1)
+    if modes > 1:
+        rprint(
+            "[bold red]Error: Only one of --prompt, --prompt-file, --test allowed.[/bold red]"
+        )
+        raise typer.Exit(1)
+
+    # Start container if needed
+    if not container_is_running(meta.container_name):
+        rprint(f"[dim]Starting container {meta.container_name}...[/dim]")
+        container_start(meta.container_name)
+
+    # Build auth env
+    exec_env: dict[str, str] = {}
+    try:
+        exec_env = get_auth_exec_env(meta)
+    except ValueError:
+        rprint(
+            f"[bold red]Error: {meta.api_key_env} is not set. "
+            "Cannot launch Claude without credentials.[/bold red]"
+        )
+        raise typer.Exit(1)
+
+    # --test: quick check
+    if test:
+        result = container_exec(
+            meta.container_name,
+            ["claude", "--version"],
+            user=constants.CONTAINER_USER,
+            env=exec_env,
+            check=False,
+        )
+        if result.returncode == 0:
+            rprint(
+                f"[bold green]Claude available:[/bold green] {result.stdout.strip()}"
+            )
+        else:
+            rprint(
+                f"[bold red]Claude not available (exit {result.returncode})[/bold red]"
+            )
+            raise typer.Exit(result.returncode)
+        return
+
+    # Resolve prompt text
+    prompt_text = prompt
+    if prompt_file:
+        pf = Path(prompt_file)
+        if not pf.is_file():
+            rprint(f"[bold red]Error: Prompt file not found: {pf}[/bold red]")
+            raise typer.Exit(1)
+        prompt_text = pf.read_text()
+
+    claude_cmd = ["claude", "-p", prompt_text, "--dangerously-skip-permissions"]
+
+    if background:
+        log_path = get_env_dir(name) / "claude.log"
+        docker_cmd = ["docker", "exec"]
+        for k, v in exec_env.items():
+            docker_cmd.extend(["-e", f"{k}={v}"])
+        docker_cmd.extend(["-u", constants.CONTAINER_USER, meta.container_name])
+        docker_cmd.extend(claude_cmd)
+
+        log_file = open(log_path, "w")  # noqa: SIM115
+        proc = subprocess.Popen(
+            docker_cmd,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+        )
+        rprint(f"[bold green]Launched in background (PID {proc.pid})[/bold green]")
+        rprint(f"[dim]Log: {log_path}[/dim]")
+        return
+
+    # Foreground: stream output
+    result = container_exec(
+        meta.container_name,
+        claude_cmd,
+        user=constants.CONTAINER_USER,
+        env=exec_env,
+        capture=False,
+    )
+    raise typer.Exit(result.returncode)
