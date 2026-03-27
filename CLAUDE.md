@@ -49,13 +49,17 @@ The CLI is available as `trusty-cage` or the short alias `tc`.
 | Command | Purpose |
 |---|---|
 | `init [--force]` | Create config directory and default `.env` file |
-| `create <git-repo-url> [--name] [--no-attach]` | Clone repo, build image, create container+volume, copy files in, init local git, apply dotfiles, attach |
+| `create <git-repo-url> [--name] [--no-attach] [--auth-mode] [--dockerfile]` | Clone repo, build image, create container+volume, copy files in, init local git, apply dotfiles, attach |
 | `attach <name>` | Start container if stopped, apply iptables, create/attach tmux session |
 | `stop <name>` | Stop container (preserves volume) |
-| `list` | Show all environments with status, date, repo URL |
-| `export <name>` | Copy container files → host clone via rsync (preserving host `.git/`) |
+| `list [--json]` | Show all environments with status, date, repo URL |
+| `exists <name>` | Check if an environment exists (exit code 0/1) |
+| `export <name> [--output-dir]` | Copy container files → host clone via rsync (preserving host `.git/`) |
 | `destroy <name>` | Remove container + volume (keeps host clone) |
-| `rebuild-image` | Force rebuild Docker image |
+| `rebuild-image [--dockerfile]` | Force rebuild Docker image |
+| `auth <name> [--login]` | Refresh/verify credentials; `--login` opens interactive Claude for `/login` |
+| `launch <name> --prompt\|--prompt-file\|--test [--background]` | Launch Claude inside a cage with proper auth handling |
+| `logs <name> [-f] [--raw]` | Stream inner Claude's reasoning from outside the cage (pretty-print by default) |
 
 ### Host File Layout
 
