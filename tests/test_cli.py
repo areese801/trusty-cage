@@ -489,9 +489,9 @@ class TestLaunchCommand:
         result = runner.invoke(app, ["launch", "myenv", "--prompt", "say hello"])
         assert result.exit_code == 0
         cmd = mock_exec.call_args[0][1]
-        assert "claude" in cmd
-        assert "-p" in cmd
-        assert "say hello" in cmd
+        # Command is ["bash", "-c", "claude -p 'say hello' ..."]
+        assert cmd[0] == "bash"
+        assert "say hello" in cmd[2]
 
     def test_launch_api_key_injects_env(
         self, mocker, monkeypatch, mock_trusty_cage_dir
@@ -535,4 +535,4 @@ class TestLaunchCommand:
         )
         assert result.exit_code == 0
         cmd = mock_exec.call_args[0][1]
-        assert "Build me a thing" in cmd
+        assert "Build me a thing" in cmd[2]
