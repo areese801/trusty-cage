@@ -141,6 +141,8 @@ def container_exec(
     args = ["exec"]
     if interactive:
         args.extend(["-it"])
+    elif input is not None:
+        args.append("-i")
     if user:
         args.extend(["-u", user])
     if env:
