@@ -4,11 +4,13 @@ CLI entry point for trusty-cage.
 
 import importlib.resources
 import json
+import os
+import shlex
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Optional
+from typing import IO, Optional
 
 import typer
 from rich import print as rprint
@@ -830,7 +832,15 @@ def launch(
             raise typer.Exit(1)
         prompt_text = pf.read_text()
 
-    claude_cmd = ["claude", "-p", prompt_text, "--dangerously-skip-permissions"]
+    stream_log = f"{constants.CAGE_MSG_DIR}/claude-stream.log"
+    claude_cmd = [
+        "bash",
+        "-c",
+        f"claude -p {shlex.quote(prompt_text)} "
+        f"--dangerously-skip-permissions "
+        f"--output-format stream-json --verbose "
+        f"2>&1 | tee {stream_log}",
+    ]
 
     if background:
         log_path = get_env_dir(name) / "claude.log"
@@ -847,7 +857,8 @@ def launch(
             stderr=subprocess.STDOUT,
         )
         rprint(f"[bold green]Launched in background (PID {proc.pid})[/bold green]")
-        rprint(f"[dim]Log: {log_path}[/dim]")
+        rprint(f"[dim]Host log: {log_path}[/dim]")
+        rprint(f"[dim]Stream log: tc logs {name}[/dim]")
         return
 
     # Foreground: stream output
@@ -859,3 +870,197 @@ def launch(
         capture=False,
     )
     raise typer.Exit(result.returncode)
+
+
+def _is_inside_cage() -> bool:
+    """
+    Check if we're running inside a trusty-cage container.
+    """
+    return os.environ.get("TRUSTY_CAGE") == "1"
+
+
+def _format_stream_line(line: str) -> str | None:
+    """
+    Parse a stream-json line and return a pretty-printed string, or None to skip.
+    """
+    line = line.strip()
+    if not line:
+        return None
+    try:
+        msg = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+
+    t = msg.get("type", "")
+
+    if t == "system":
+        model = msg.get("model", "unknown")
+        sid = msg.get("session_id", "")[:8]
+        return f"[bold blue]INIT[/bold blue] session={sid}... model={model}"
+
+    if t == "assistant":
+        parts = []
+        for block in msg.get("message", {}).get("content", []):
+            bt = block.get("type", "")
+            if bt == "thinking":
+                thought = block.get("thinking", "")
+                if thought:
+                    parts.append(f"[dim]THINKING[/dim] {thought[:150]}")
+            elif bt == "tool_use":
+                tool = block.get("name", "")
+                inp = block.get("input", {})
+                if tool == "Bash":
+                    parts.append(
+                        f"[yellow]TOOL[/yellow] {tool}: {inp.get('command', '')[:120]}"
+                    )
+                elif tool in ("Write", "Edit"):
+                    parts.append(
+                        f"[yellow]TOOL[/yellow] {tool}: {inp.get('file_path', '')}"
+                    )
+                else:
+                    parts.append(f"[yellow]TOOL[/yellow] {tool}")
+            elif bt == "text":
+                text = block.get("text", "")
+                if text:
+                    parts.append(f"[green]CLAUDE[/green] {text[:200]}")
+        return "\n".join(parts) if parts else None
+
+    if t == "user":
+        for block in msg.get("message", {}).get("content", []):
+            if block.get("type") == "tool_result":
+                content = block.get("content", "")[:150]
+                return f"[dim]RESULT[/dim] {content}"
+        return None
+
+    if t == "result":
+        result_text = msg.get("result", "")[:200]
+        cost = msg.get("total_cost_usd", 0)
+        duration = msg.get("duration_ms", 0) / 1000
+        return (
+            f"[bold green]DONE[/bold green] {result_text}\n"
+            f"     cost=${cost:.4f} duration={duration:.1f}s"
+        )
+
+    return None
+
+
+def _pretty_stream(input_stream: "IO[str]") -> None:
+    """
+    Read stream-json lines and pretty-print them.
+    """
+    try:
+        for line in input_stream:
+            formatted = _format_stream_line(line)
+            if formatted:
+                rprint(formatted)
+    except KeyboardInterrupt:
+        pass
+
+
+@app.command()
+def logs(
+    name: Optional[str] = typer.Argument(
+        None, help="Name of the environment (not needed inside a cage)"
+    ),
+    follow: bool = typer.Option(
+        False, "--follow", "-f", help="Follow log output (like tail -f)"
+    ),
+    raw: bool = typer.Option(
+        False, "--raw", "-r", help="Show raw JSON instead of pretty-printed output"
+    ),
+    lines: int = typer.Option(50, "--lines", "-n", help="Number of lines to show"),
+) -> None:
+    """
+    View the inner Claude's stream log. Works from the host or inside the cage.
+    """
+    stream_log = f"{constants.CAGE_MSG_DIR}/claude-stream.log"
+
+    if _is_inside_cage():
+        if follow:
+            if not raw:
+                proc = subprocess.Popen(
+                    ["tail", "-f", "-n", str(lines), stream_log],
+                    stdout=subprocess.PIPE,
+                    text=True,
+                )
+                _pretty_stream(proc.stdout)
+            else:
+                os.execlp("tail", "tail", "-f", "-n", str(lines), stream_log)
+        else:
+            try:
+                result = subprocess.run(
+                    ["tail", "-n", str(lines), stream_log],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                if not raw:
+                    import io
+
+                    _pretty_stream(io.StringIO(result.stdout))
+                else:
+                    print(result.stdout, end="")
+            except subprocess.CalledProcessError:
+                rprint("[dim]No stream log found. Has Claude been launched?[/dim]")
+                raise typer.Exit(1)
+        return
+
+    # Outside the container: read via docker exec
+    _require_docker()
+
+    if not name:
+        rprint(
+            "[bold red]Error: Environment name required when running from host.[/bold red]"
+        )
+        raise typer.Exit(1)
+
+    if not env_exists(name):
+        rprint(f"[bold red]Error: Environment '{name}' not found.[/bold red]")
+        raise typer.Exit(1)
+
+    meta = load_meta(name)
+
+    if not container_is_running(meta.container_name):
+        rprint("[bold red]Error: Container is not running.[/bold red]")
+        raise typer.Exit(1)
+
+    if follow:
+        if not raw:
+            proc = subprocess.Popen(
+                [
+                    "docker",
+                    "exec",
+                    "-u",
+                    constants.CONTAINER_USER,
+                    meta.container_name,
+                    "tail",
+                    "-f",
+                    "-n",
+                    str(lines),
+                    stream_log,
+                ],
+                stdout=subprocess.PIPE,
+                text=True,
+            )
+            _pretty_stream(proc.stdout)
+        else:
+            exec_replace(
+                meta.container_name,
+                ["tail", "-f", "-n", str(lines), stream_log],
+            )
+    else:
+        result = container_exec(
+            meta.container_name,
+            ["tail", "-n", str(lines), stream_log],
+            user=constants.CONTAINER_USER,
+            check=False,
+        )
+        if result.returncode != 0:
+            rprint("[dim]No stream log found. Has Claude been launched?[/dim]")
+            raise typer.Exit(1)
+        if not raw:
+            import io
+
+            _pretty_stream(io.StringIO(result.stdout))
+        else:
+            print(result.stdout, end="")
