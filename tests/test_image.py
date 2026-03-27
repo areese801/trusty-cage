@@ -6,6 +6,7 @@ from trusty_cage.image import (
     compute_dockerfile_sha,
     get_asset_path,
     needs_rebuild,
+    resolve_dockerfile,
 )
 
 
@@ -51,3 +52,49 @@ class TestNeedsRebuild:
         mocker.patch("trusty_cage.image.image_exists", return_value=True)
         (mock_trusty_cage_dir / "image.sha").write_text("stale_sha_value")
         assert needs_rebuild() is True
+
+
+class TestResolveDockerfile:
+    def test_cli_flag_takes_priority(self, tmp_path, mock_trusty_cage_dir):
+        cli_file = tmp_path / "Custom.Dockerfile"
+        cli_file.write_text("FROM ubuntu:24.04\n")
+
+        # Also create convention file — should be ignored
+        (mock_trusty_cage_dir / "Dockerfile").write_text("FROM alpine:latest\n")
+
+        path, is_custom = resolve_dockerfile(str(cli_file))
+        assert path == str(cli_file.resolve())
+        assert is_custom is True
+
+    def test_convention_path_when_no_flag(self, mock_trusty_cage_dir):
+        convention = mock_trusty_cage_dir / "Dockerfile"
+        convention.write_text("FROM ubuntu:24.04\n")
+
+        path, is_custom = resolve_dockerfile(None)
+        assert path == str(convention)
+        assert is_custom is True
+
+    def test_falls_back_to_bundled(self, mock_trusty_cage_dir):
+        path, is_custom = resolve_dockerfile(None)
+        assert path.endswith("Dockerfile")
+        assert is_custom is False
+
+    def test_cli_flag_file_not_found(self, tmp_path):
+        import pytest
+
+        with pytest.raises(FileNotFoundError):
+            resolve_dockerfile(str(tmp_path / "nonexistent.Dockerfile"))
+
+    def test_needs_rebuild_with_custom_dockerfile(
+        self, mocker, mock_trusty_cage_dir, tmp_path
+    ):
+        custom = tmp_path / "Custom.Dockerfile"
+        custom.write_text("FROM ubuntu:24.04\n")
+
+        mocker.patch("trusty_cage.image.image_exists", return_value=True)
+
+        # Store SHA of bundled Dockerfile — should mismatch with custom
+        bundled_sha = compute_dockerfile_sha()
+        (mock_trusty_cage_dir / "image.sha").write_text(bundled_sha)
+
+        assert needs_rebuild(str(custom)) is True

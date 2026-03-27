@@ -55,6 +55,7 @@ class TestCreateCommand:
         mocker.patch(f"{CLI}.container_start")
         mocker.patch(f"{CLI}.copy_to_container")
         mocker.patch(f"{CLI}.container_exec")
+        mocker.patch(f"{CLI}.init_messaging_dirs")
         mock_prompt = mocker.patch(f"{CLI}.prompt_auth_mode")
 
         def fake_clone(*args, **kwargs):
@@ -113,6 +114,7 @@ class TestCreateCommand:
         mocker.patch(f"{CLI}.container_start")
         mocker.patch(f"{CLI}.copy_to_container")
         mocker.patch(f"{CLI}.container_exec")
+        mocker.patch(f"{CLI}.init_messaging_dirs")
 
         # Mock git clone to create a repo dir with a file
         def fake_clone(*args, **kwargs):

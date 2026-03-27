@@ -48,7 +48,8 @@ from trusty_cage.environment import (
     list_envs as get_all_envs,
     load_meta,
 )
-from trusty_cage.image import build_if_needed, rebuild
+from trusty_cage.image import build_if_needed, rebuild, resolve_dockerfile
+from trusty_cage.messaging import init_messaging_dirs
 from trusty_cage.network import apply_network_policy
 
 app = typer.Typer(
@@ -123,6 +124,11 @@ def create(
     auth_mode: Optional[str] = typer.Option(
         None, "--auth-mode", help="Authentication mode: api_key or subscription"
     ),
+    dockerfile: Optional[str] = typer.Option(
+        None,
+        "--dockerfile",
+        help="Path to a custom Dockerfile (replaces the default image)",
+    ),
 ) -> None:
     """
     Create a new isolated development environment from a git repo.
@@ -153,9 +159,14 @@ def create(
         )
         raise typer.Exit(1)
 
-    # Build image if needed
+    # Resolve Dockerfile and build image if needed
     python_version = resolve(constants.ENV_PYTHON_VERSION)
-    build_if_needed(python_version=python_version)
+    dockerfile_path, is_custom = resolve_dockerfile(dockerfile)
+    build_if_needed(
+        python_version=python_version,
+        dockerfile_path=dockerfile_path,
+        is_custom=is_custom,
+    )
 
     # Git clone to host (reuse existing clone if present from a prior destroy)
     env_dir = get_env_dir(env_name)
@@ -231,6 +242,9 @@ def create(
         ],
         user="root",
     )
+
+    # Create messaging directories for cage orchestrator communication
+    init_messaging_dirs(meta.container_name)
 
     # Init local git inside container (no remotes)
     container_exec(
@@ -657,12 +671,23 @@ def destroy(
 
 
 @app.command("rebuild-image")
-def rebuild_image() -> None:
+def rebuild_image(
+    dockerfile: Optional[str] = typer.Option(
+        None,
+        "--dockerfile",
+        help="Path to a custom Dockerfile (replaces the default image)",
+    ),
+) -> None:
     """
     Force rebuild the Docker image from scratch.
     """
     _require_docker()
 
     python_version = resolve(constants.ENV_PYTHON_VERSION)
-    rebuild(python_version=python_version)
+    dockerfile_path, is_custom = resolve_dockerfile(dockerfile)
+    rebuild(
+        python_version=python_version,
+        dockerfile_path=dockerfile_path,
+        is_custom=is_custom,
+    )
     rprint("[bold green]Done.[/bold green]")
