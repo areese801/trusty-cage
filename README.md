@@ -133,14 +133,19 @@ trusty-cage destroy hello-world
 
 | Command | Description |
 |---|---|
+| `trusty-cage --version` | Show version and exit |
 | `trusty-cage init [--force]` | Create config directory and default `.env` file |
-| `trusty-cage create <url> [--name NAME] [--no-attach]` | Create a new environment from a git repo |
+| `trusty-cage create <url> [--name] [--no-attach] [--auth-mode] [--dockerfile]` | Create a new environment from a git repo |
 | `trusty-cage attach <name>` | Attach to an existing environment |
 | `trusty-cage stop <name>` | Stop a container (preserves work) |
-| `trusty-cage list` | List all environments with status |
-| `trusty-cage export <name>` | Copy work back to host clone |
-| `trusty-cage destroy <name>` | Remove container and volume (keeps host clone) |
-| `trusty-cage rebuild-image` | Force rebuild the Docker image |
+| `trusty-cage list [--json]` | List all environments with status |
+| `trusty-cage exists <name>` | Check if an environment exists (exit code 0/1) |
+| `trusty-cage export <name> [--yes] [--output-dir]` | Copy work back to host clone |
+| `trusty-cage destroy <name> [--yes]` | Remove container and volume (keeps host clone) |
+| `trusty-cage rebuild-image [--dockerfile]` | Force rebuild the Docker image |
+| `trusty-cage auth <name> [--login]` | Refresh or verify credentials for an environment |
+| `trusty-cage launch <name> --prompt\|--prompt-file\|--test [--background]` | Launch Claude Code inside a cage |
+| `trusty-cage logs [name] [-f] [--raw]` | Stream inner Claude's reasoning (pretty-printed by default) |
 
 ## Configuration
 
@@ -167,10 +172,45 @@ This means your shell config, tmux settings, Neovim config, aliases, and other p
 
 ## Authentication
 
-Chosen at `create` time:
+Chosen at `create` time via `--auth-mode`:
 
-- **api_key** — Reads `ANTHROPIC_API_KEY` from your host shell at attach time. Injected via `docker exec -e`, never written to disk.
-- **subscription** — Copies `~/.claude/` credentials into the container at create time. Persists in the volume.
+- **api_key** — Reads `ANTHROPIC_API_KEY` from your host shell at attach/launch time. Injected via `docker exec -e`, never written to disk. Best for API billing users.
+- **subscription** — Copies `~/.claude/`, `~/.claude.json`, and OAuth tokens from macOS Keychain into the container at create time. Persists in the volume. Best for Claude Pro/Max subscribers — no API key needed.
+
+Refresh credentials at any time with `trusty-cage auth <name>`. For subscription mode, use `--login` to open an interactive Claude session for `/login` if tokens have expired.
+
+## Orchestration
+
+trusty-cage can be used programmatically to run an inner Claude autonomously while an outer Claude (or script) monitors and coordinates.
+
+```bash
+# Create a cage (subscription auth, no interactive attach)
+tc create https://github.com/user/repo --name myproject --auth-mode subscription --no-attach
+
+# Verify Claude can start
+tc launch myproject --test
+
+# Send a task
+tc launch myproject --prompt "Implement feature X" --background
+
+# Watch the inner Claude work in real-time (pretty-printed)
+tc logs myproject -f
+
+# Or get raw stream-json
+tc logs myproject -f --raw
+
+# When done, export and overlay onto your working directory
+tc export myproject --yes --output-dir .
+```
+
+The container includes a **messaging system** for structured communication between the inner and outer Claude. Messages are JSON files in well-known directories:
+
+- **Outbox** (`~/.cage/outbox/`) — Inner Claude writes status updates here
+- **Inbox** (`~/.cage/inbox/`) — Outer Claude writes responses here
+
+Message types: `task_complete`, `progress_update`, `info_request`, `error`, `info_response`, `ack`.
+
+This enables the [cage-orchestrator](https://github.com/areese801/agent_skills) skill to dispatch tasks, monitor progress, handle information requests, and export results — all without human intervention inside the cage.
 
 ## Security Model
 

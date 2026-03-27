@@ -3,6 +3,7 @@ CLI entry point for trusty-cage.
 """
 
 import importlib.resources
+import io
 import json
 import os
 import shlex
@@ -856,6 +857,7 @@ def launch(
             stdout=log_file,
             stderr=subprocess.STDOUT,
         )
+        log_file.close()  # Popen has inherited the fd
         rprint(f"[bold green]Launched in background (PID {proc.pid})[/bold green]")
         rprint(f"[dim]Host log: {log_path}[/dim]")
         rprint(f"[dim]Stream log: tc logs {name}[/dim]")
@@ -888,8 +890,19 @@ def _format_stream_line(line: str) -> str | None:
         return None
     try:
         msg = json.loads(line)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, ValueError):
         return None
+
+    try:
+        return _format_stream_msg(msg)
+    except (KeyError, TypeError, AttributeError):
+        return None
+
+
+def _format_stream_msg(msg: dict) -> str | None:
+    """
+    Format a parsed stream-json message. Separated for defensive error handling.
+    """
 
     t = msg.get("type", "")
 
@@ -983,7 +996,11 @@ def logs(
                     stdout=subprocess.PIPE,
                     text=True,
                 )
-                _pretty_stream(proc.stdout)
+                try:
+                    _pretty_stream(proc.stdout)
+                finally:
+                    proc.terminate()
+                    proc.wait()
             else:
                 os.execlp("tail", "tail", "-f", "-n", str(lines), stream_log)
         else:
@@ -995,8 +1012,6 @@ def logs(
                     check=True,
                 )
                 if not raw:
-                    import io
-
                     _pretty_stream(io.StringIO(result.stdout))
                 else:
                     print(result.stdout, end="")
@@ -1042,7 +1057,11 @@ def logs(
                 stdout=subprocess.PIPE,
                 text=True,
             )
-            _pretty_stream(proc.stdout)
+            try:
+                _pretty_stream(proc.stdout)
+            finally:
+                proc.terminate()
+                proc.wait()
         else:
             exec_replace(
                 meta.container_name,
@@ -1059,8 +1078,6 @@ def logs(
             rprint("[dim]No stream log found. Has Claude been launched?[/dim]")
             raise typer.Exit(1)
         if not raw:
-            import io
-
             _pretty_stream(io.StringIO(result.stdout))
         else:
             print(result.stdout, end="")
