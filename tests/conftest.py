@@ -22,5 +22,6 @@ def mock_trusty_cage_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(constants, "ENVS_DIR", envs_dir)
     monkeypatch.setattr(constants, "DOTENV_PATH", dotenv_path)
     monkeypatch.setattr(constants, "IMAGE_SHA_PATH", cage_dir / "image.sha")
+    monkeypatch.setattr(constants, "CUSTOM_DOCKERFILE", cage_dir / "Dockerfile")
 
     return cage_dir

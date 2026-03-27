@@ -9,6 +9,7 @@ TRUSTY_CAGE_DIR = Path.home() / ".trusty-cage"
 ENVS_DIR = TRUSTY_CAGE_DIR / "envs"
 DOTENV_PATH = TRUSTY_CAGE_DIR / ".env"
 IMAGE_SHA_PATH = TRUSTY_CAGE_DIR / "image.sha"
+CUSTOM_DOCKERFILE = TRUSTY_CAGE_DIR / "Dockerfile"
 
 # Docker naming
 IMAGE_TAG = "trusty-cage:latest"
@@ -19,6 +20,14 @@ VOLUME_PREFIX = "isolated-dev-"
 CONTAINER_USER = "trustycage"
 CONTAINER_HOME = f"/home/{CONTAINER_USER}"
 CONTAINER_PROJECT_DIR = f"{CONTAINER_HOME}/project"
+
+# Messaging directories (inside container)
+CAGE_MSG_DIR = f"{CONTAINER_HOME}/.cage"
+CAGE_OUTBOX_DIR = f"{CAGE_MSG_DIR}/outbox"
+CAGE_INBOX_DIR = f"{CAGE_MSG_DIR}/inbox"
+CAGE_CURSOR_DIR = f"{CAGE_MSG_DIR}/cursor"
+CAGE_OUTBOX_CURSOR = f"{CAGE_CURSOR_DIR}/outbox.cursor"
+CAGE_INBOX_CURSOR = f"{CAGE_CURSOR_DIR}/inbox.cursor"
 
 # tmux
 TMUX_SESSION = "dev"

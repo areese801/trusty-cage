@@ -4,11 +4,13 @@ CLI entry point for trusty-cage.
 
 import importlib.resources
 import json
+import os
+import shlex
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Optional
+from typing import IO, Optional
 
 import typer
 from rich import print as rprint
@@ -18,6 +20,7 @@ from rich.table import Table
 from trusty_cage import __version__, constants
 from trusty_cage.auth import (
     copy_subscription_credentials,
+    get_auth_exec_env,
     inject_api_key,
     prompt_auth_mode,
     validate_subscription_credentials,
@@ -48,7 +51,8 @@ from trusty_cage.environment import (
     list_envs as get_all_envs,
     load_meta,
 )
-from trusty_cage.image import build_if_needed, rebuild
+from trusty_cage.image import build_if_needed, rebuild, resolve_dockerfile
+from trusty_cage.messaging import init_messaging_dirs
 from trusty_cage.network import apply_network_policy
 
 app = typer.Typer(
@@ -123,6 +127,11 @@ def create(
     auth_mode: Optional[str] = typer.Option(
         None, "--auth-mode", help="Authentication mode: api_key or subscription"
     ),
+    dockerfile: Optional[str] = typer.Option(
+        None,
+        "--dockerfile",
+        help="Path to a custom Dockerfile (replaces the default image)",
+    ),
 ) -> None:
     """
     Create a new isolated development environment from a git repo.
@@ -153,9 +162,14 @@ def create(
         )
         raise typer.Exit(1)
 
-    # Build image if needed
+    # Resolve Dockerfile and build image if needed
     python_version = resolve(constants.ENV_PYTHON_VERSION)
-    build_if_needed(python_version=python_version)
+    dockerfile_path, is_custom = resolve_dockerfile(dockerfile)
+    build_if_needed(
+        python_version=python_version,
+        dockerfile_path=dockerfile_path,
+        is_custom=is_custom,
+    )
 
     # Git clone to host (reuse existing clone if present from a prior destroy)
     env_dir = get_env_dir(env_name)
@@ -232,6 +246,9 @@ def create(
         user="root",
     )
 
+    # Create messaging directories for cage orchestrator communication
+    init_messaging_dirs(meta.container_name)
+
     # Init local git inside container (no remotes)
     container_exec(
         meta.container_name,
@@ -301,14 +318,13 @@ def attach(
 
     # Build env dict for API key injection
     exec_env: dict[str, str] = {}
-    if meta.auth_mode == "api_key":
-        try:
-            exec_env = inject_api_key(meta.api_key_env)
-        except ValueError:
-            rprint(
-                f"[bold yellow]Warning: {meta.api_key_env} is not set. "
-                "Claude Code will not have an API key in this session.[/bold yellow]"
-            )
+    try:
+        exec_env = get_auth_exec_env(meta)
+    except ValueError:
+        rprint(
+            f"[bold yellow]Warning: {meta.api_key_env} is not set. "
+            "Claude Code will not have an API key in this session.[/bold yellow]"
+        )
 
     # Check if tmux session exists
     tmux_check = container_exec(
@@ -657,12 +673,394 @@ def destroy(
 
 
 @app.command("rebuild-image")
-def rebuild_image() -> None:
+def rebuild_image(
+    dockerfile: Optional[str] = typer.Option(
+        None,
+        "--dockerfile",
+        help="Path to a custom Dockerfile (replaces the default image)",
+    ),
+) -> None:
     """
     Force rebuild the Docker image from scratch.
     """
     _require_docker()
 
     python_version = resolve(constants.ENV_PYTHON_VERSION)
-    rebuild(python_version=python_version)
+    dockerfile_path, is_custom = resolve_dockerfile(dockerfile)
+    rebuild(
+        python_version=python_version,
+        dockerfile_path=dockerfile_path,
+        is_custom=is_custom,
+    )
     rprint("[bold green]Done.[/bold green]")
+
+
+@app.command()
+def auth(
+    name: str = typer.Argument(help="Name of the environment"),
+    login: bool = typer.Option(
+        False, "--login", help="Open interactive Claude session for /login"
+    ),
+) -> None:
+    """
+    Refresh or verify authentication credentials for an environment.
+    """
+    _require_docker()
+
+    if not env_exists(name):
+        rprint(f"[bold red]Error: Environment '{name}' not found.[/bold red]")
+        raise typer.Exit(1)
+
+    meta = load_meta(name)
+
+    # Start container if needed
+    if not container_is_running(meta.container_name):
+        rprint(f"[dim]Starting container {meta.container_name}...[/dim]")
+        container_start(meta.container_name)
+
+    if meta.auth_mode == "subscription":
+        copy_subscription_credentials(meta.container_name)
+        rprint("[bold green]Subscription credentials refreshed.[/bold green]")
+
+        if login:
+            rprint("[dim]Opening interactive Claude session for /login...[/dim]")
+            exec_replace(
+                meta.container_name,
+                ["claude"],
+            )
+    elif meta.auth_mode == "api_key":
+        if login:
+            rprint(
+                "[bold red]Error: --login is not applicable for api_key mode.[/bold red]"
+            )
+            raise typer.Exit(1)
+
+        try:
+            env = inject_api_key(meta.api_key_env)
+            key_value = env[meta.api_key_env]
+            masked = key_value[:8] + "..." if len(key_value) > 8 else "***"
+            rprint(f"[bold green]API key verified:[/bold green] {masked}")
+        except ValueError:
+            rprint(
+                f"[bold red]Error: {meta.api_key_env} is not set in your environment.[/bold red]"
+            )
+            raise typer.Exit(1)
+
+
+@app.command()
+def launch(
+    name: str = typer.Argument(help="Name of the environment"),
+    prompt: Optional[str] = typer.Option(
+        None, "--prompt", "-p", help="Prompt text to send to Claude"
+    ),
+    prompt_file: Optional[str] = typer.Option(
+        None, "--prompt-file", help="Read prompt from a file"
+    ),
+    test: bool = typer.Option(
+        False, "--test", help="Verify Claude can start (run claude --version)"
+    ),
+    background: bool = typer.Option(
+        False, "--background", help="Run in background, log to file"
+    ),
+) -> None:
+    """
+    Launch Claude Code inside a cage environment.
+    """
+    _require_docker()
+
+    if not env_exists(name):
+        rprint(f"[bold red]Error: Environment '{name}' not found.[/bold red]")
+        raise typer.Exit(1)
+
+    meta = load_meta(name)
+
+    # Validate exactly one mode
+    modes = sum([prompt is not None, prompt_file is not None, test])
+    if modes == 0:
+        rprint(
+            "[bold red]Error: Provide --prompt, --prompt-file, or --test.[/bold red]"
+        )
+        raise typer.Exit(1)
+    if modes > 1:
+        rprint(
+            "[bold red]Error: Only one of --prompt, --prompt-file, --test allowed.[/bold red]"
+        )
+        raise typer.Exit(1)
+
+    # Start container if needed
+    if not container_is_running(meta.container_name):
+        rprint(f"[dim]Starting container {meta.container_name}...[/dim]")
+        container_start(meta.container_name)
+
+    # Build auth env
+    exec_env: dict[str, str] = {}
+    try:
+        exec_env = get_auth_exec_env(meta)
+    except ValueError:
+        rprint(
+            f"[bold red]Error: {meta.api_key_env} is not set. "
+            "Cannot launch Claude without credentials.[/bold red]"
+        )
+        raise typer.Exit(1)
+
+    # --test: quick check
+    if test:
+        result = container_exec(
+            meta.container_name,
+            ["claude", "--version"],
+            user=constants.CONTAINER_USER,
+            env=exec_env,
+            check=False,
+        )
+        if result.returncode == 0:
+            rprint(
+                f"[bold green]Claude available:[/bold green] {result.stdout.strip()}"
+            )
+        else:
+            rprint(
+                f"[bold red]Claude not available (exit {result.returncode})[/bold red]"
+            )
+            raise typer.Exit(result.returncode)
+        return
+
+    # Resolve prompt text
+    prompt_text = prompt
+    if prompt_file:
+        pf = Path(prompt_file)
+        if not pf.is_file():
+            rprint(f"[bold red]Error: Prompt file not found: {pf}[/bold red]")
+            raise typer.Exit(1)
+        prompt_text = pf.read_text()
+
+    stream_log = f"{constants.CAGE_MSG_DIR}/claude-stream.log"
+    claude_cmd = [
+        "bash",
+        "-c",
+        f"claude -p {shlex.quote(prompt_text)} "
+        f"--dangerously-skip-permissions "
+        f"--output-format stream-json --verbose "
+        f"2>&1 | tee {stream_log}",
+    ]
+
+    if background:
+        log_path = get_env_dir(name) / "claude.log"
+        docker_cmd = ["docker", "exec"]
+        for k, v in exec_env.items():
+            docker_cmd.extend(["-e", f"{k}={v}"])
+        docker_cmd.extend(["-u", constants.CONTAINER_USER, meta.container_name])
+        docker_cmd.extend(claude_cmd)
+
+        log_file = open(log_path, "w")  # noqa: SIM115
+        proc = subprocess.Popen(
+            docker_cmd,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+        )
+        rprint(f"[bold green]Launched in background (PID {proc.pid})[/bold green]")
+        rprint(f"[dim]Host log: {log_path}[/dim]")
+        rprint(f"[dim]Stream log: tc logs {name}[/dim]")
+        return
+
+    # Foreground: stream output
+    result = container_exec(
+        meta.container_name,
+        claude_cmd,
+        user=constants.CONTAINER_USER,
+        env=exec_env,
+        capture=False,
+    )
+    raise typer.Exit(result.returncode)
+
+
+def _is_inside_cage() -> bool:
+    """
+    Check if we're running inside a trusty-cage container.
+    """
+    return os.environ.get("TRUSTY_CAGE") == "1"
+
+
+def _format_stream_line(line: str) -> str | None:
+    """
+    Parse a stream-json line and return a pretty-printed string, or None to skip.
+    """
+    line = line.strip()
+    if not line:
+        return None
+    try:
+        msg = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+
+    t = msg.get("type", "")
+
+    if t == "system":
+        model = msg.get("model", "unknown")
+        sid = msg.get("session_id", "")[:8]
+        return f"[bold blue]INIT[/bold blue] session={sid}... model={model}"
+
+    if t == "assistant":
+        parts = []
+        for block in msg.get("message", {}).get("content", []):
+            bt = block.get("type", "")
+            if bt == "thinking":
+                thought = block.get("thinking", "")
+                if thought:
+                    parts.append(f"[dim]THINKING[/dim] {thought[:150]}")
+            elif bt == "tool_use":
+                tool = block.get("name", "")
+                inp = block.get("input", {})
+                if tool == "Bash":
+                    parts.append(
+                        f"[yellow]TOOL[/yellow] {tool}: {inp.get('command', '')[:120]}"
+                    )
+                elif tool in ("Write", "Edit"):
+                    parts.append(
+                        f"[yellow]TOOL[/yellow] {tool}: {inp.get('file_path', '')}"
+                    )
+                else:
+                    parts.append(f"[yellow]TOOL[/yellow] {tool}")
+            elif bt == "text":
+                text = block.get("text", "")
+                if text:
+                    parts.append(f"[green]CLAUDE[/green] {text[:200]}")
+        return "\n".join(parts) if parts else None
+
+    if t == "user":
+        for block in msg.get("message", {}).get("content", []):
+            if block.get("type") == "tool_result":
+                content = block.get("content", "")[:150]
+                return f"[dim]RESULT[/dim] {content}"
+        return None
+
+    if t == "result":
+        result_text = msg.get("result", "")[:200]
+        cost = msg.get("total_cost_usd", 0)
+        duration = msg.get("duration_ms", 0) / 1000
+        return (
+            f"[bold green]DONE[/bold green] {result_text}\n"
+            f"     cost=${cost:.4f} duration={duration:.1f}s"
+        )
+
+    return None
+
+
+def _pretty_stream(input_stream: "IO[str]") -> None:
+    """
+    Read stream-json lines and pretty-print them.
+    """
+    try:
+        for line in input_stream:
+            formatted = _format_stream_line(line)
+            if formatted:
+                rprint(formatted)
+    except KeyboardInterrupt:
+        pass
+
+
+@app.command()
+def logs(
+    name: Optional[str] = typer.Argument(
+        None, help="Name of the environment (not needed inside a cage)"
+    ),
+    follow: bool = typer.Option(
+        False, "--follow", "-f", help="Follow log output (like tail -f)"
+    ),
+    raw: bool = typer.Option(
+        False, "--raw", "-r", help="Show raw JSON instead of pretty-printed output"
+    ),
+    lines: int = typer.Option(50, "--lines", "-n", help="Number of lines to show"),
+) -> None:
+    """
+    View the inner Claude's stream log. Works from the host or inside the cage.
+    """
+    stream_log = f"{constants.CAGE_MSG_DIR}/claude-stream.log"
+
+    if _is_inside_cage():
+        if follow:
+            if not raw:
+                proc = subprocess.Popen(
+                    ["tail", "-f", "-n", str(lines), stream_log],
+                    stdout=subprocess.PIPE,
+                    text=True,
+                )
+                _pretty_stream(proc.stdout)
+            else:
+                os.execlp("tail", "tail", "-f", "-n", str(lines), stream_log)
+        else:
+            try:
+                result = subprocess.run(
+                    ["tail", "-n", str(lines), stream_log],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                if not raw:
+                    import io
+
+                    _pretty_stream(io.StringIO(result.stdout))
+                else:
+                    print(result.stdout, end="")
+            except subprocess.CalledProcessError:
+                rprint("[dim]No stream log found. Has Claude been launched?[/dim]")
+                raise typer.Exit(1)
+        return
+
+    # Outside the container: read via docker exec
+    _require_docker()
+
+    if not name:
+        rprint(
+            "[bold red]Error: Environment name required when running from host.[/bold red]"
+        )
+        raise typer.Exit(1)
+
+    if not env_exists(name):
+        rprint(f"[bold red]Error: Environment '{name}' not found.[/bold red]")
+        raise typer.Exit(1)
+
+    meta = load_meta(name)
+
+    if not container_is_running(meta.container_name):
+        rprint("[bold red]Error: Container is not running.[/bold red]")
+        raise typer.Exit(1)
+
+    if follow:
+        if not raw:
+            proc = subprocess.Popen(
+                [
+                    "docker",
+                    "exec",
+                    "-u",
+                    constants.CONTAINER_USER,
+                    meta.container_name,
+                    "tail",
+                    "-f",
+                    "-n",
+                    str(lines),
+                    stream_log,
+                ],
+                stdout=subprocess.PIPE,
+                text=True,
+            )
+            _pretty_stream(proc.stdout)
+        else:
+            exec_replace(
+                meta.container_name,
+                ["tail", "-f", "-n", str(lines), stream_log],
+            )
+    else:
+        result = container_exec(
+            meta.container_name,
+            ["tail", "-n", str(lines), stream_log],
+            user=constants.CONTAINER_USER,
+            check=False,
+        )
+        if result.returncode != 0:
+            rprint("[dim]No stream log found. Has Claude been launched?[/dim]")
+            raise typer.Exit(1)
+        if not raw:
+            import io
+
+            _pretty_stream(io.StringIO(result.stdout))
+        else:
+            print(result.stdout, end="")
