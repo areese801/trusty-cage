@@ -140,12 +140,14 @@ trusty-cage destroy hello-world
 | `trusty-cage stop <name>` | Stop a container (preserves work) |
 | `trusty-cage list [--json]` | List all environments with status |
 | `trusty-cage exists <name>` | Check if an environment exists (exit code 0/1) |
-| `trusty-cage export <name> [--yes] [--output-dir]` | Copy work back to host clone |
-| `trusty-cage destroy <name> [--yes]` | Remove container and volume (keeps host clone) |
+| `trusty-cage export <name> [-y/--yes] [--output-dir]` | Copy work back to host clone |
+| `trusty-cage destroy <name> [-y/--yes]` | Remove container and volume (keeps host clone) |
 | `trusty-cage rebuild-image [--dockerfile]` | Force rebuild the Docker image |
 | `trusty-cage auth <name> [--login]` | Refresh or verify credentials for an environment |
-| `trusty-cage launch <name> --prompt\|--prompt-file\|--test [--background]` | Launch Claude Code inside a cage |
-| `trusty-cage logs [name] [-f] [--raw]` | Stream inner Claude's reasoning (pretty-printed by default) |
+| `trusty-cage launch <name> -p/--prompt\|--prompt-file\|--test [--background]` | Launch Claude Code inside a cage |
+| `trusty-cage logs [name] [-f] [-r/--raw] [-n/--lines N]` | Stream inner Claude's reasoning (pretty-printed by default) |
+| `trusty-cage outbox <name> [-a/--all] [--json] [--poll] [--timeout] [--interval]` | Read messages from a cage's outbox |
+| `trusty-cage inbox <name> <type> <payload_json>` | Send a message to a cage's inbox |
 
 ## Configuration
 
@@ -240,11 +242,20 @@ tc logs myproject -f --raw
 # For long prompts, use a file
 tc launch myproject --prompt-file /path/to/prompt.txt --background
 
+# Poll for completion (blocks until task_complete arrives)
+tc outbox myproject --poll --timeout 1800
+
+# Or read outbox messages manually
+tc outbox myproject --all --json
+
+# Send a response to the inner Claude's inbox
+tc inbox myproject info_response '{"request_id":"req-001","content":"file contents"}'
+
 # When done, export and overlay onto your working directory
-tc export myproject --yes --output-dir .
+tc export myproject -y --output-dir .
 
 # Clean up
-tc destroy myproject --yes
+tc destroy myproject -y
 ```
 
 ### Monitoring with `tc logs`
@@ -265,15 +276,36 @@ DONE Script created and working.
 
 Use `--raw` for the full stream-json output. Use `-f` / `--follow` to tail in real-time.
 
+### `cage-send` (Inside the Container)
+
+The container image includes `cage-send` at `/usr/local/bin/cage-send` — a helper script that handles message envelope construction (id, timestamp, version) so the inner Claude doesn't have to build JSON by hand:
+
+```bash
+# Report progress
+cage-send progress_update '{"status":"implementing auth module","detail":"3 of 5 files done"}'
+
+# Request a file from the host
+cage-send info_request '{"request_id":"req-001","description":"Need package.json","paths":["package.json"]}'
+
+# Report an error
+cage-send error '{"error_type":"missing_dep","message":"need ffmpeg","recoverable":true}'
+
+# Signal completion (REQUIRED as final action)
+cage-send task_complete '{"summary":"Implemented feature X","exit_code":0}'
+```
+
+Valid types: `task_complete`, `progress_update`, `error`, `info_request`. The script validates the type and JSON payload before writing.
+
 ### Messaging System
 
 The container includes a file-based message bus for structured communication between the inner and outer Claude. Messages are timestamped JSON files in well-known directories:
 
 ```
 /home/trustycage/.cage/
-  outbox/           # Inner Claude writes here, outer reads
-  inbox/            # Outer Claude writes here, inner reads
-  cursor/           # Tracks read position (Kafka-like offset)
+  outbox/                  # Inner Claude writes here (via cage-send), outer reads (via tc outbox)
+  inbox/                   # Outer Claude writes here (via tc inbox), inner reads
+  cursor/                  # Tracks read position (Kafka-like offset)
+  claude-stream.log        # Stream-json output from tc launch (readable via tc logs)
 ```
 
 **Message types:**
@@ -299,7 +331,7 @@ The container includes a file-based message bus for structured communication bet
 }
 ```
 
-The messaging system is initialized automatically during `tc create`. It enables the [cage-orchestrator](https://github.com/areese801/agent_skills) skill to dispatch tasks, monitor progress, handle information requests, and export results — keeping the human in the loop for sensitive operations (auth, git push, file access) while the inner Claude works autonomously.
+The messaging system is initialized automatically during `tc create`. It enables the cage-orchestrator skill (part of [agent_skills](https://github.com/areese801/agent_skills)) to dispatch tasks, monitor progress, handle information requests, and export results — keeping the human in the loop for sensitive operations (auth, git push, file access) while the inner Claude works autonomously.
 
 ## Security Model
 
