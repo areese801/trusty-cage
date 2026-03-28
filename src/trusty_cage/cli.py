@@ -10,6 +10,7 @@ import shlex
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import IO, Optional
 
@@ -1143,8 +1144,6 @@ def outbox_read(
     """
     Read messages from a cage's outbox.
     """
-    import time
-
     meta = _require_env_running(name)
 
     if poll:
