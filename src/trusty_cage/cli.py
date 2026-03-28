@@ -481,6 +481,19 @@ def list_envs(
     """
     envs = get_all_envs()
 
+    def _resolve_status(meta_item) -> str:
+        """
+        Determine environment status: running, stopped, or orphaned.
+        """
+        try:
+            if not container_exists(meta_item.container_name):
+                return "orphaned"
+            if container_is_running(meta_item.container_name):
+                return "running"
+            return "stopped"
+        except Exception:
+            return "unknown"
+
     if json_output:
         if not envs:
             print("[]")
@@ -488,19 +501,13 @@ def list_envs(
 
         entries = []
         for meta in envs:
-            try:
-                running = container_is_running(meta.container_name)
-                status = "running" if running else "stopped"
-            except Exception:
-                status = "unknown"
-
             created = (
                 meta.created_at[:10] if len(meta.created_at) >= 10 else meta.created_at
             )
             entries.append(
                 {
                     "name": meta.name,
-                    "status": status,
+                    "status": _resolve_status(meta),
                     "repo_url": meta.repo_url,
                     "created_at": created,
                     "auth_mode": meta.auth_mode,
@@ -521,17 +528,25 @@ def list_envs(
     table.add_column("Created", style="dim")
     table.add_column("Auth", style="dim")
 
-    for meta in envs:
-        try:
-            running = container_is_running(meta.container_name)
-            status = "[green]running[/green]" if running else "[yellow]stopped[/yellow]"
-        except Exception:
-            status = "[red]unknown[/red]"
+    status_styles = {
+        "running": "[green]running[/green]",
+        "stopped": "[yellow]stopped[/yellow]",
+        "orphaned": "[red]orphaned[/red]",
+        "unknown": "[red]unknown[/red]",
+    }
 
+    for meta in envs:
+        status = _resolve_status(meta)
         created = (
             meta.created_at[:10] if len(meta.created_at) >= 10 else meta.created_at
         )
-        table.add_row(meta.name, status, meta.repo_url, created, meta.auth_mode)
+        table.add_row(
+            meta.name,
+            status_styles.get(status, status),
+            meta.repo_url,
+            created,
+            meta.auth_mode,
+        )
 
     rprint(table)
 

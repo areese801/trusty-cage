@@ -310,6 +310,7 @@ class TestListJsonFlag:
         create_meta(name="env-a", repo_url="https://a.com/r", auth_mode="api_key")
         create_meta(name="env-b", repo_url="https://b.com/r", auth_mode="subscription")
 
+        mocker.patch(f"{CLI}.container_exists", return_value=True)
         mocker.patch(f"{CLI}.container_is_running", return_value=True)
 
         result = runner.invoke(app, ["list", "--json"])
