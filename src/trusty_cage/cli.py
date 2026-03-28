@@ -53,7 +53,12 @@ from trusty_cage.environment import (
     load_meta,
 )
 from trusty_cage.image import build_if_needed, rebuild, resolve_dockerfile
-from trusty_cage.messaging import init_messaging_dirs
+from trusty_cage.messaging import (
+    init_messaging_dirs,
+    read_outbox,
+    send_to_inbox,
+    set_cursor,
+)
 from trusty_cage.network import apply_network_policy
 
 app = typer.Typer(
@@ -1096,3 +1101,127 @@ def logs(
             _pretty_stream(io.StringIO(result.stdout))
         else:
             print(result.stdout, end="")
+
+
+# ---------------------------------------------------------------------------
+# Messaging commands
+# ---------------------------------------------------------------------------
+
+
+def _require_env_running(name: str):
+    """
+    Validate environment exists and container is running. Returns meta.
+    """
+    _require_docker()
+    if not env_exists(name):
+        rprint(f"[bold red]Error: Environment '{name}' not found.[/bold red]")
+        raise typer.Exit(1)
+    meta = load_meta(name)
+    if not container_is_running(meta.container_name):
+        rprint("[bold red]Error: Container is not running.[/bold red]")
+        raise typer.Exit(1)
+    return meta
+
+
+@app.command("outbox")
+def outbox_read(
+    name: str = typer.Argument(help="Name of the environment"),
+    all_messages: bool = typer.Option(
+        False, "--all", "-a", help="Show all messages (ignore cursor)"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON array"),
+    poll: bool = typer.Option(
+        False, "--poll", help="Poll until a task_complete message arrives"
+    ),
+    timeout: int = typer.Option(
+        1800, "--timeout", help="Poll timeout in seconds (default: 1800 = 30m)"
+    ),
+    interval: int = typer.Option(
+        30, "--interval", help="Poll interval in seconds (default: 30)"
+    ),
+) -> None:
+    """
+    Read messages from a cage's outbox.
+    """
+    import time
+
+    meta = _require_env_running(name)
+
+    if poll:
+        rprint(f"[dim]Polling outbox for task_complete (timeout: {timeout}s)...[/dim]")
+        start = time.time()
+        while True:
+            messages = read_outbox(meta.container_name, since_cursor=True)
+            for msg in messages:
+                if msg.type == "progress_update":
+                    rprint(f"[dim]Progress:[/dim] {msg.payload.get('status', '')}")
+                elif msg.type == "error":
+                    rprint(
+                        f"[bold red]Error:[/bold red] {msg.payload.get('message', '')}"
+                    )
+                elif msg.type == "task_complete":
+                    summary = msg.payload.get("summary", "")
+                    exit_code = msg.payload.get("exit_code", 0)
+                    if exit_code == 0:
+                        rprint(f"[bold green]Task complete:[/bold green] {summary}")
+                    else:
+                        rprint(
+                            f"[bold yellow]Task complete (exit {exit_code}):[/bold yellow] {summary}"
+                        )
+                    if messages:
+                        set_cursor(meta.container_name, messages[-1].timestamp)
+                    raise typer.Exit(exit_code)
+                else:
+                    rprint(f"[dim][{msg.type}][/dim] {msg.payload}")
+
+            if messages:
+                set_cursor(meta.container_name, messages[-1].timestamp)
+
+            elapsed = time.time() - start
+            if elapsed >= timeout:
+                rprint("[bold red]Timeout waiting for task_complete.[/bold red]")
+                raise typer.Exit(1)
+
+            time.sleep(interval)
+        return
+
+    messages = read_outbox(meta.container_name, since_cursor=not all_messages)
+
+    if json_output:
+        print(json.dumps([m.to_dict() for m in messages], indent=2))
+        return
+
+    if not messages:
+        rprint("[dim]No messages.[/dim]")
+        return
+
+    for msg in messages:
+        ts = msg.timestamp[:19] if len(msg.timestamp) >= 19 else msg.timestamp
+        rprint(f"[cyan]{ts}[/cyan] [bold]{msg.type}[/bold]")
+        for key, value in msg.payload.items():
+            rprint(f"  {key}: {value}")
+
+    # Advance cursor
+    if not all_messages:
+        set_cursor(meta.container_name, messages[-1].timestamp)
+
+
+@app.command("inbox")
+def inbox_send(
+    name: str = typer.Argument(help="Name of the environment"),
+    msg_type: str = typer.Argument(help="Message type (info_response, ack)"),
+    payload_json: str = typer.Argument(help="Payload as JSON string"),
+) -> None:
+    """
+    Send a message to a cage's inbox.
+    """
+    meta = _require_env_running(name)
+
+    try:
+        payload = json.loads(payload_json)
+    except json.JSONDecodeError as e:
+        rprint(f"[bold red]Error: Invalid JSON payload: {e}[/bold red]")
+        raise typer.Exit(1)
+
+    msg = send_to_inbox(meta.container_name, msg_type, payload)
+    rprint(f"[bold green]Sent [{msg.type}][/bold green] id={msg.id}")
