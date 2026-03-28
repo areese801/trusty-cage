@@ -4,11 +4,13 @@ Tests for CLI commands via Typer CliRunner.
 
 import json
 import subprocess
+from unittest.mock import MagicMock, patch
 
 from typer.testing import CliRunner
 
 from trusty_cage import __version__
 from trusty_cage.cli import app
+from trusty_cage.messaging import Message
 
 runner = CliRunner()
 
@@ -537,3 +539,63 @@ class TestLaunchCommand:
         assert result.exit_code == 0
         cmd = mock_exec.call_args[0][1]
         assert "Build me a thing" in cmd[2]
+
+
+class TestOutboxPollGoingIdle:
+    """Test that --poll exits with code 2 on going_idle message."""
+
+    def test_poll_exits_on_going_idle(self):
+        """tc outbox --poll should exit with code 2 when going_idle is received."""
+        mock_meta = MagicMock()
+        mock_meta.container_name = "isolated-dev-test"
+
+        going_idle_msg = Message(
+            id="msg-test-idle",
+            type="going_idle",
+            timestamp="2026-03-28T15:00:00.000Z",
+            payload={"reason": "No task_revision received", "waited_seconds": 3600},
+            version=1,
+        )
+
+        with (
+            patch("trusty_cage.cli._require_env_running", return_value=mock_meta),
+            patch("trusty_cage.cli.read_outbox", return_value=[going_idle_msg]),
+            patch("trusty_cage.cli.set_cursor"),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(app, ["outbox", "test", "--poll"])
+            assert result.exit_code == 2
+            assert "Inner agent idle" in result.output
+            assert "3600" in result.output
+
+    def test_poll_continues_past_progress_then_exits_on_going_idle(self):
+        """Non-terminal messages don't stop polling; going_idle does."""
+        mock_meta = MagicMock()
+        mock_meta.container_name = "isolated-dev-test"
+
+        progress_msg = Message(
+            id="msg-test-progress",
+            type="progress_update",
+            timestamp="2026-03-28T14:00:00.000Z",
+            payload={"status": "working", "detail": "halfway done"},
+            version=1,
+        )
+        going_idle_msg = Message(
+            id="msg-test-idle",
+            type="going_idle",
+            timestamp="2026-03-28T15:00:00.000Z",
+            payload={"reason": "No task_revision received", "waited_seconds": 3600},
+            version=1,
+        )
+
+        with (
+            patch("trusty_cage.cli._require_env_running", return_value=mock_meta),
+            patch(
+                "trusty_cage.cli.read_outbox",
+                return_value=[progress_msg, going_idle_msg],
+            ),
+            patch("trusty_cage.cli.set_cursor"),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(app, ["outbox", "test", "--poll"])
+            assert result.exit_code == 2
