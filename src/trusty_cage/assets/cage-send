@@ -18,7 +18,7 @@
 set -euo pipefail
 
 OUTBOX_DIR="${HOME}/.cage/outbox"
-VALID_TYPES="task_complete progress_update error info_request"
+VALID_TYPES="task_complete progress_update error info_request going_idle"
 
 if [ $# -lt 2 ]; then
     echo "Usage: cage-send <type> <payload_json>" >&2

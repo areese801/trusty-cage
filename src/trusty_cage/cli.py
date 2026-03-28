@@ -1132,7 +1132,9 @@ def outbox_read(
     ),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON array"),
     poll: bool = typer.Option(
-        False, "--poll", help="Poll until a task_complete message arrives"
+        False,
+        "--poll",
+        help="Poll until a task_complete or going_idle message arrives",
     ),
     timeout: int = typer.Option(
         1800, "--timeout", help="Poll timeout in seconds (default: 1800 = 30m)"
@@ -1158,6 +1160,16 @@ def outbox_read(
                     rprint(
                         f"[bold red]Error:[/bold red] {msg.payload.get('message', '')}"
                     )
+                elif msg.type == "going_idle":
+                    reason = msg.payload.get("reason", "Inner agent went idle")
+                    waited = msg.payload.get("waited_seconds", 0)
+                    rprint(
+                        f"[bold yellow]Inner agent idle:[/bold yellow] {reason} "
+                        f"(waited {waited}s)"
+                    )
+                    if messages:
+                        set_cursor(meta.container_name, messages[-1].timestamp)
+                    raise typer.Exit(2)
                 elif msg.type == "task_complete":
                     summary = msg.payload.get("summary", "")
                     exit_code = msg.payload.get("exit_code", 0)
@@ -1208,7 +1220,9 @@ def outbox_read(
 @app.command("inbox")
 def inbox_send(
     name: str = typer.Argument(help="Name of the environment"),
-    msg_type: str = typer.Argument(help="Message type (info_response, ack)"),
+    msg_type: str = typer.Argument(
+        help="Message type (info_response, ack, task_revision)"
+    ),
     payload_json: str = typer.Argument(help="Payload as JSON string"),
 ) -> None:
     """
