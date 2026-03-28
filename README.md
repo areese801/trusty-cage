@@ -177,40 +177,129 @@ Chosen at `create` time via `--auth-mode`:
 - **api_key** — Reads `ANTHROPIC_API_KEY` from your host shell at attach/launch time. Injected via `docker exec -e`, never written to disk. Best for API billing users.
 - **subscription** — Copies `~/.claude/`, `~/.claude.json`, and OAuth tokens from macOS Keychain into the container at create time. Persists in the volume. Best for Claude Pro/Max subscribers — no API key needed.
 
-Refresh credentials at any time with `trusty-cage auth <name>`. For subscription mode, use `--login` to open an interactive Claude session for `/login` if tokens have expired.
+```bash
+# Create with API key auth (default)
+tc create https://github.com/user/repo
+# Requires ANTHROPIC_API_KEY to be set in your shell
+
+# Create with subscription auth (Claude Pro/Max)
+tc create https://github.com/user/repo --auth-mode subscription
+# Automatically extracts OAuth tokens from macOS Keychain
+
+# Refresh credentials at any time
+tc auth myenv
+
+# If subscription tokens have expired, re-login interactively
+tc auth myenv --login
+```
+
+On macOS, subscription mode extracts OAuth tokens from the system Keychain (`Claude Code-credentials`) and writes them as `~/.claude/.credentials.json` inside the container. This bridges macOS Keychain storage with Linux's file-based fallback — no manual `/login` step needed.
+
+## Custom Dockerfile
+
+By default, trusty-cage uses a built-in Dockerfile (Ubuntu 24.04 with Python, Node.js, Neovim, tmux, Claude Code). You can replace it entirely with your own:
+
+```bash
+# Via CLI flag (highest priority)
+tc create https://github.com/user/repo --dockerfile /path/to/Dockerfile
+
+# Via convention path (used if no flag is passed)
+# Place your Dockerfile at ~/.trusty-cage/Dockerfile
+
+# Rebuild the image with a custom Dockerfile
+tc rebuild-image --dockerfile /path/to/Dockerfile
+```
+
+Custom Dockerfiles fully replace the default — you are responsible for including the `trustycage` user (UID 1000), required tools, and any security constraints your workflow requires.
 
 ## Orchestration
 
-trusty-cage can be used programmatically to run an inner Claude autonomously while an outer Claude (or script) monitors and coordinates.
+trusty-cage supports two modes of use:
+
+1. **Interactive** — `tc attach` drops you into a tmux session with Claude Code, Neovim, and a shell. You prompt Claude directly and watch it work.
+2. **Headless** — `tc launch` runs Claude non-interactively with a prompt. An outer Claude (or script) orchestrates the inner Claude, monitors progress, and exports results.
+
+### Headless Workflow
 
 ```bash
-# Create a cage (subscription auth, no interactive attach)
+# Create a cage (no interactive attach)
 tc create https://github.com/user/repo --name myproject --auth-mode subscription --no-attach
 
-# Verify Claude can start
+# Verify Claude can start (pre-flight check)
 tc launch myproject --test
 
 # Send a task
 tc launch myproject --prompt "Implement feature X" --background
 
-# Watch the inner Claude work in real-time (pretty-printed)
+# Watch the inner Claude's reasoning in real-time (from the host)
 tc logs myproject -f
 
-# Or get raw stream-json
+# Or get raw stream-json for programmatic consumption
 tc logs myproject -f --raw
+
+# For long prompts, use a file
+tc launch myproject --prompt-file /path/to/prompt.txt --background
 
 # When done, export and overlay onto your working directory
 tc export myproject --yes --output-dir .
+
+# Clean up
+tc destroy myproject --yes
 ```
 
-The container includes a **messaging system** for structured communication between the inner and outer Claude. Messages are JSON files in well-known directories:
+### Monitoring with `tc logs`
 
-- **Outbox** (`~/.cage/outbox/`) — Inner Claude writes status updates here
-- **Inbox** (`~/.cage/inbox/`) — Outer Claude writes responses here
+`tc logs` streams the inner Claude's reasoning from outside the cage — no attach needed. Output is pretty-printed by default:
 
-Message types: `task_complete`, `progress_update`, `info_request`, `error`, `info_response`, `ack`.
+```
+INIT session=a48c7ada... model=claude-opus-4-6[1m]
+THINKING Simple task - create a weather.py script with temperature conversion.
+TOOL Write: /home/trustycage/project/weather.py
+RESULT File created successfully at: /home/trustycage/project/weather.py
+TOOL Bash: python weather.py
+RESULT 0°C = 32.00°F ...
+CLAUDE Script created and working.
+DONE Script created and working.
+     cost=$0.1563 duration=10.5s
+```
 
-This enables the [cage-orchestrator](https://github.com/areese801/agent_skills) skill to dispatch tasks, monitor progress, handle information requests, and export results — all without human intervention inside the cage.
+Use `--raw` for the full stream-json output. Use `-f` / `--follow` to tail in real-time.
+
+### Messaging System
+
+The container includes a file-based message bus for structured communication between the inner and outer Claude. Messages are timestamped JSON files in well-known directories:
+
+```
+/home/trustycage/.cage/
+  outbox/           # Inner Claude writes here, outer reads
+  inbox/            # Outer Claude writes here, inner reads
+  cursor/           # Tracks read position (Kafka-like offset)
+```
+
+**Message types:**
+
+| Type | Direction | Purpose |
+|---|---|---|
+| `task_complete` | inner -> outer | Signal task is done (includes summary) |
+| `progress_update` | inner -> outer | Report what's being worked on |
+| `info_request` | inner -> outer | Ask for files/data from the host |
+| `error` | inner -> outer | Report a blocker |
+| `info_response` | outer -> inner | Respond to an info_request |
+| `ack` | outer -> inner | Acknowledge receipt of a message |
+
+**Message format:**
+
+```json
+{
+  "id": "msg-20260326T143000-a1b2",
+  "type": "task_complete",
+  "timestamp": "2026-03-26T14:30:00.000Z",
+  "payload": { "summary": "Implemented feature X", "exit_code": 0 },
+  "version": 1
+}
+```
+
+The messaging system is initialized automatically during `tc create`. It enables the [cage-orchestrator](https://github.com/areese801/agent_skills) skill to dispatch tasks, monitor progress, handle information requests, and export results — keeping the human in the loop for sensitive operations (auth, git push, file access) while the inner Claude works autonomously.
 
 ## Security Model
 
