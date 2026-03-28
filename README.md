@@ -214,6 +214,31 @@ tc rebuild-image --dockerfile /path/to/Dockerfile
 
 Custom Dockerfiles fully replace the default — you are responsible for including the `trustycage` user (UID 1000), required tools, and any security constraints your workflow requires.
 
+### Extending the Base Image
+
+If you only need to add packages or tools on top of the default image, use Docker's `FROM` inheritance instead of replacing the entire Dockerfile:
+
+```dockerfile
+FROM trusty-cage:latest
+
+# Add system packages
+RUN apt-get update && apt-get install -y postgresql-client redis-tools
+
+# Add Python packages
+RUN pip install pandas requests
+
+# Add project-specific tooling
+COPY my-linter.conf /home/trustycage/.config/
+```
+
+Build the base image first (happens automatically on `tc create`), then pass your extending Dockerfile:
+
+```bash
+tc create https://github.com/user/repo --dockerfile ./Dockerfile.custom
+```
+
+This preserves the base setup (non-root user, tmux, Neovim, Claude Code, network policy) while letting you layer on project-specific dependencies.
+
 ## Orchestration
 
 trusty-cage supports two modes of use:
@@ -294,7 +319,7 @@ cage-send error '{"error_type":"missing_dep","message":"need ffmpeg","recoverabl
 cage-send task_complete '{"summary":"Implemented feature X","exit_code":0}'
 ```
 
-Valid types: `task_complete`, `progress_update`, `error`, `info_request`. The script validates the type and JSON payload before writing.
+Valid types: `task_complete`, `progress_update`, `error`, `info_request`, `going_idle`. The script validates the type and JSON payload before writing.
 
 ### Messaging System
 
@@ -318,6 +343,8 @@ The container includes a file-based message bus for structured communication bet
 | `error` | inner -> outer | Report a blocker |
 | `info_response` | outer -> inner | Respond to an info_request |
 | `ack` | outer -> inner | Acknowledge receipt of a message |
+| `task_revision` | outer -> inner | Send revised instructions after review |
+| `going_idle` | inner -> outer | Inner Claude's polling timed out, session ending |
 
 **Message format:**
 
@@ -331,7 +358,28 @@ The container includes a file-based message bus for structured communication bet
 }
 ```
 
-The messaging system is initialized automatically during `tc create`. It enables the cage-orchestrator skill (part of [agent_skills](https://github.com/areese801/agent_skills)) to dispatch tasks, monitor progress, handle information requests, and export results — keeping the human in the loop for sensitive operations (auth, git push, file access) while the inner Claude works autonomously.
+The messaging system is initialized automatically during `tc create`. The new `task_revision` and `going_idle` message types support an iteration loop — inner Claude polls for revised instructions after completing a task, allowing multiple rounds of feedback without destroying the cage.
+
+### Using the Cage Orchestrator Skill
+
+The easiest way to use trusty-cage in headless mode is through the **cage-orchestrator** skill (part of [agent_skills](https://github.com/areese801/agent_skills)). Instead of running CLI commands manually, you tell your outer Claude to delegate work to an isolated cage:
+
+> "Spin up a cage and implement feature X in this repo"
+
+The cage-orchestrator skill handles the full lifecycle automatically:
+
+1. **Creates** a cage from the current repo's git remote
+2. **Launches** inner Claude with your task description
+3. **Monitors** progress via `tc logs` and `tc outbox --poll`
+4. **Relays** progress updates and handles information requests from inner Claude
+5. **Exports** completed work back to your working directory
+6. **Reviews** changes with you (`git diff`)
+7. **Iterates** — if you have feedback, it sends revised instructions back to inner Claude (who stays alive and keeps context), and the cycle repeats
+8. **Cleans up** when you're done
+
+The inner Claude works with full autonomy inside the container — installing packages, editing files, running tests — while the outer Claude keeps you informed and handles anything that requires host access (git push, file retrieval, approvals).
+
+To use the skill, install the [agent_skills](https://github.com/areese801/agent_skills) repo as a Claude Code skill source. The skill activates when you ask Claude to run something in a cage.
 
 ## Security Model
 
