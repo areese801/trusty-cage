@@ -54,11 +54,13 @@ The CLI is available as `trusty-cage` or the short alias `tc`.
 | `stop <name>` | Stop container (preserves volume) |
 | `list [--json]` | Show all environments with status, date, repo URL |
 | `exists <name>` | Check if an environment exists (exit code 0/1) |
-| `export <name> [--output-dir]` | Copy container files → host clone via rsync (preserving host `.git/`) |
+| `export <name> [--output-dir] [--delete] [--protect]` | Copy container files → host clone via rsync (no `--delete` by default; respects `.gitignore` + `.cageprotect`) |
+| `diff <name> [--full] [--output-dir]` | Preview what `tc export` would change (dry-run rsync comparison) |
+| `sync <name> [--files] [--yes]` | Push host files into cage (inverse of export; excludes `.git/` + `.cageprotect` patterns) |
 | `destroy <name>` | Remove container + volume (keeps host clone) |
 | `rebuild-image [--dockerfile]` | Force rebuild Docker image |
 | `auth <name> [--login]` | Refresh/verify credentials; `--login` opens interactive Claude for `/login` |
-| `launch <name> --prompt\|--prompt-file\|--test [--background]` | Launch Claude inside a cage with proper auth handling |
+| `launch <name> --prompt\|--prompt-file\|--test [--background] [--no-inject-messaging]` | Launch Claude inside a cage with proper auth handling (messaging instructions injected by default) |
 | `logs <name> [-f] [--raw]` | Stream inner Claude's reasoning from outside the cage (pretty-print by default) |
 
 ### Host File Layout
