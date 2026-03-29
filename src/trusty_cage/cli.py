@@ -570,6 +570,57 @@ def exists(
         raise typer.Exit(1)
 
 
+def _collect_exclude_patterns(
+    target: Path,
+    protect: list[str] | None = None,
+) -> list[str]:
+    """
+    Build a deduplicated list of rsync --exclude patterns from .git/,
+    .gitignore, .cageprotect, and explicit --protect globs.
+    """
+    seen: set[str] = set()
+    patterns: list[str] = []
+
+    def _add(pat: str) -> None:
+        if pat not in seen:
+            seen.add(pat)
+            patterns.append(pat)
+
+    _add(".git/")
+    _add(".gitignore")
+    _add(".cageprotect")
+
+    for filename in (".gitignore", ".cageprotect"):
+        path = target / filename
+        if path.is_file():
+            for line in path.read_text().splitlines():
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    _add(line)
+
+    for pat in protect or []:
+        _add(pat)
+
+    return patterns
+
+
+def _export_to_tempdir(container_name: str, tmpdir: Path) -> Path:
+    """
+    Copy the container's project directory into a temp dir and strip .git/.
+    Returns the path to the exported project directory.
+    """
+    export_dir = tmpdir / "project"
+    copy_from_container(
+        container_name,
+        constants.CONTAINER_PROJECT_DIR + "/.",
+        str(export_dir),
+    )
+    exported_git = export_dir / ".git"
+    if exported_git.exists():
+        shutil.rmtree(exported_git)
+    return export_dir
+
+
 @app.command()
 def export(
     name: str = typer.Argument(help="Name of the environment to export"),
@@ -578,6 +629,14 @@ def export(
         None,
         "--output-dir",
         help="Export to this directory instead of the default host clone",
+    ),
+    delete: bool = typer.Option(
+        False, "--delete", help="Delete host files not present in container"
+    ),
+    protect: Optional[list[str]] = typer.Option(
+        None,
+        "--protect",
+        help="Glob patterns to exclude from sync (repeatable)",
     ),
 ) -> None:
     """
@@ -612,37 +671,14 @@ def export(
         container_start(meta.container_name)
         was_stopped = True
 
-    # Copy project dir from container to temp dir
     with tempfile.TemporaryDirectory(prefix="trusty-cage-export-") as tmpdir:
-        export_dir = Path(tmpdir) / "project"
-        copy_from_container(
-            meta.container_name,
-            constants.CONTAINER_PROJECT_DIR + "/.",
-            str(export_dir),
-        )
+        export_dir = _export_to_tempdir(meta.container_name, Path(tmpdir))
 
-        # Remove .git/ from exported files (container has its own local git)
-        exported_git = export_dir / ".git"
-        if exported_git.exists():
-            shutil.rmtree(exported_git)
-
-        # Build rsync command, preserving .git/ and gitignored paths
-        rsync_cmd = [
-            "rsync",
-            "-a",
-            "--delete",
-            "--exclude",
-            ".git/",
-        ]
-
-        # Protect host-only paths that match .gitignore patterns from --delete
-        gitignore_path = export_target / ".gitignore"
-        if gitignore_path.is_file():
-            for line in gitignore_path.read_text().splitlines():
-                line = line.strip()
-                if line and not line.startswith("#"):
-                    rsync_cmd.extend(["--exclude", line])
-
+        rsync_cmd = ["rsync", "-a"]
+        if delete:
+            rsync_cmd.append("--delete")
+        for pat in _collect_exclude_patterns(export_target, protect):
+            rsync_cmd.extend(["--exclude", pat])
         rsync_cmd.extend(
             [
                 str(export_dir) + "/",
@@ -666,6 +702,219 @@ def export(
     rprint("  git diff")
     rprint("  git add -A && git commit -m 'work from trusty-cage'")
     rprint("  git push")
+
+
+@app.command()
+def diff(
+    name: str = typer.Argument(help="Name of the environment"),
+    full: bool = typer.Option(False, "--full", help="Show full diff content"),
+    output_dir: Optional[str] = typer.Option(
+        None,
+        "--output-dir",
+        help="Compare against this directory instead of the default host clone",
+    ),
+) -> None:
+    """
+    Preview what 'tc export' would change (dry run).
+    """
+    _require_docker()
+
+    if not env_exists(name):
+        rprint(f"[bold red]Error: Environment '{name}' not found.[/bold red]")
+        raise typer.Exit(1)
+
+    meta = load_meta(name)
+
+    if output_dir:
+        target = Path(output_dir).resolve()
+        if not target.is_dir():
+            rprint(
+                f"[bold red]Error: Directory does not exist: {target}[/bold red]"
+            )
+            raise typer.Exit(1)
+    else:
+        target = Path(meta.host_clone_path)
+
+    was_stopped = False
+    if not container_is_running(meta.container_name):
+        container_start(meta.container_name)
+        was_stopped = True
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="trusty-cage-diff-") as tmpdir:
+            export_dir = _export_to_tempdir(meta.container_name, Path(tmpdir))
+
+            # Use rsync --dry-run -i to preview changes.
+            # Always use --delete in dry-run to show what *would* be removed.
+            rsync_cmd = ["rsync", "-a", "--dry-run", "-i", "--delete"]
+            for pat in _collect_exclude_patterns(target):
+                rsync_cmd.extend(["--exclude", pat])
+            rsync_cmd.extend(
+                [str(export_dir) + "/", str(target) + "/"]
+            )
+
+            result = subprocess.run(
+                rsync_cmd, capture_output=True, text=True, check=True
+            )
+
+            lines = [
+                ln for ln in result.stdout.splitlines() if ln.strip()
+            ]
+
+            if not lines:
+                rprint("[dim]No differences.[/dim]")
+                return
+
+            # Parse rsync itemize output
+            changes: list[tuple[str, str]] = []
+            for ln in lines:
+                if ln.startswith("*deleting"):
+                    filename = ln.split(None, 1)[1].strip()
+                    changes.append((filename, "deleted"))
+                elif len(ln) > 12 and ln[0] in (">", "<", "c"):
+                    code = ln[:11]
+                    filename = ln[12:].strip()
+                    if not filename or filename.endswith("/"):
+                        continue
+                    if "+" * 4 in code:
+                        changes.append((filename, "added"))
+                    else:
+                        changes.append((filename, "modified"))
+
+            if not changes:
+                rprint("[dim]No differences.[/dim]")
+                return
+
+            if full:
+                # Show full unified diffs for added/modified files
+                for filename, status in changes:
+                    cage_file = export_dir / filename
+                    host_file = target / filename
+                    if status == "deleted":
+                        rprint(
+                            f"\n[bold red]--- deleted: {filename}[/bold red]"
+                        )
+                        continue
+                    diff_result = subprocess.run(
+                        ["diff", "-u", str(host_file), str(cage_file)],
+                        capture_output=True,
+                        text=True,
+                    )
+                    if diff_result.stdout:
+                        rprint(f"\n[bold]{filename}[/bold]")
+                        rprint(diff_result.stdout.rstrip())
+                    elif status == "added":
+                        rprint(f"\n[bold green]+++ added: {filename}[/bold green]")
+                        rprint(cage_file.read_text().rstrip())
+            else:
+                # Summary table
+                table = Table(show_header=True, header_style="bold")
+                table.add_column("File")
+                table.add_column("Status")
+                style_map = {
+                    "added": "green",
+                    "modified": "yellow",
+                    "deleted": "red",
+                }
+                for filename, status in changes:
+                    table.add_row(
+                        filename,
+                        f"[{style_map[status]}]{status}[/{style_map[status]}]",
+                    )
+                rprint(table)
+                rprint(f"[dim]{len(changes)} file(s) changed[/dim]")
+    finally:
+        if was_stopped:
+            container_stop(meta.container_name)
+
+
+@app.command()
+def sync(
+    name: str = typer.Argument(help="Name of the environment to sync into"),
+    files: Optional[list[str]] = typer.Option(
+        None, "--files", help="Specific files to sync (relative to project root)"
+    ),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+) -> None:
+    """
+    Push host files into a cage environment (inverse of export).
+    """
+    _require_docker()
+
+    if not env_exists(name):
+        rprint(f"[bold red]Error: Environment '{name}' not found.[/bold red]")
+        raise typer.Exit(1)
+
+    meta = load_meta(name)
+    source = Path(meta.host_clone_path)
+
+    if not source.is_dir():
+        rprint(
+            f"[bold red]Error: Host clone not found: {source}[/bold red]"
+        )
+        raise typer.Exit(1)
+
+    if not yes and not Confirm.ask(f"Sync host files into cage '{name}'?"):
+        rprint("[dim]Cancelled.[/dim]")
+        return
+
+    was_stopped = False
+    if not container_is_running(meta.container_name):
+        container_start(meta.container_name)
+        was_stopped = True
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="trusty-cage-sync-") as tmpdir:
+            stage_dir = Path(tmpdir) / "project"
+
+            if files:
+                # Copy only the specified files, preserving directory structure
+                for relpath in files:
+                    src_file = source / relpath
+                    if not src_file.is_file():
+                        rprint(
+                            f"[bold red]Error: File not found: {relpath}[/bold red]"
+                        )
+                        raise typer.Exit(1)
+                    dest_file = stage_dir / relpath
+                    dest_file.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src_file, dest_file)
+            else:
+                # rsync the full project with excludes
+                rsync_cmd = ["rsync", "-a"]
+                for pat in _collect_exclude_patterns(source):
+                    rsync_cmd.extend(["--exclude", pat])
+                rsync_cmd.extend(
+                    [str(source) + "/", str(stage_dir) + "/"]
+                )
+                subprocess.run(
+                    rsync_cmd, check=True, capture_output=True, text=True
+                )
+
+            # docker cp staged files into container
+            copy_to_container(
+                str(stage_dir) + "/.",
+                meta.container_name,
+                constants.CONTAINER_PROJECT_DIR,
+            )
+
+            # Fix ownership
+            container_exec(
+                meta.container_name,
+                [
+                    "chown",
+                    "-R",
+                    f"{constants.CONTAINER_USER}:{constants.CONTAINER_USER}",
+                    constants.CONTAINER_PROJECT_DIR,
+                ],
+                user="root",
+            )
+
+        file_desc = f"{len(files)} file(s)" if files else "all files"
+        rprint(f"[bold green]Synced {file_desc} into cage '{name}'[/bold green]")
+    finally:
+        if was_stopped:
+            container_stop(meta.container_name)
 
 
 @app.command()
@@ -799,6 +1048,11 @@ def launch(
     background: bool = typer.Option(
         False, "--background", help="Run in background, log to file"
     ),
+    inject_messaging: bool = typer.Option(
+        True,
+        "--inject-messaging/--no-inject-messaging",
+        help="Append cage messaging instructions to the prompt",
+    ),
 ) -> None:
     """
     Launch Claude Code inside a cage environment.
@@ -868,6 +1122,13 @@ def launch(
             rprint(f"[bold red]Error: Prompt file not found: {pf}[/bold red]")
             raise typer.Exit(1)
         prompt_text = pf.read_text()
+
+    if inject_messaging and prompt_text:
+        assets = importlib.resources.files("trusty_cage.assets")
+        messaging_text = (
+            assets.joinpath("messaging-instructions.md").read_text()
+        )
+        prompt_text = prompt_text + "\n\n" + messaging_text
 
     stream_log = f"{constants.CAGE_MSG_DIR}/claude-stream.log"
     claude_cmd = [

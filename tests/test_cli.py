@@ -415,7 +415,7 @@ class TestExportGitignoreExcludes:
             for i in range(len(rsync_cmd))
             if rsync_cmd[i] == "--exclude"
         ]
-        assert exclude_args == [".git/"]
+        assert exclude_args == [".git/", ".gitignore", ".cageprotect"]
 
     def test_gitignore_patterns_added_as_excludes(
         self, mocker, mock_trusty_cage_dir, tmp_path
@@ -448,7 +448,7 @@ class TestExportGitignoreExcludes:
             for i in range(len(rsync_cmd))
             if rsync_cmd[i] == "--exclude"
         ]
-        assert exclude_args == [".git/", "venv/", ".env", "__pycache__/"]
+        assert exclude_args == [".git/", ".gitignore", ".cageprotect", "venv/", ".env", "__pycache__/"]
 
     def test_gitignore_skips_comments_and_blanks(
         self, mocker, mock_trusty_cage_dir, tmp_path
@@ -483,7 +483,7 @@ class TestExportGitignoreExcludes:
             for i in range(len(rsync_cmd))
             if rsync_cmd[i] == "--exclude"
         ]
-        assert exclude_args == [".git/", "venv/", ".env"]
+        assert exclude_args == [".git/", ".gitignore", ".cageprotect", "venv/", ".env"]
 
 
 class TestAttachCommand:
@@ -699,3 +699,453 @@ class TestOutboxPollGoingIdle:
             runner = CliRunner()
             result = runner.invoke(app, ["outbox", "test", "--poll"])
             assert result.exit_code == 2
+
+
+class TestExportDeleteDefault:
+    """Export should NOT use --delete by default; opt-in with --delete flag."""
+
+    def test_export_default_no_delete(self, mocker, mock_trusty_cage_dir):
+        from pathlib import Path
+
+        from trusty_cage.environment import create_meta
+
+        meta = create_meta(
+            name="myenv", repo_url="https://a.com/r", auth_mode="api_key"
+        )
+        Path(meta.host_clone_path).mkdir(parents=True, exist_ok=True)
+
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+        mocker.patch(f"{CLI}.copy_from_container")
+        mock_rsync = mocker.patch(f"{CLI}.subprocess.run")
+
+        result = runner.invoke(app, ["export", "myenv", "--yes"])
+        assert result.exit_code == 0
+
+        rsync_cmd = mock_rsync.call_args[0][0]
+        assert "--delete" not in rsync_cmd
+
+    def test_export_with_delete_flag(self, mocker, mock_trusty_cage_dir):
+        from pathlib import Path
+
+        from trusty_cage.environment import create_meta
+
+        meta = create_meta(
+            name="myenv", repo_url="https://a.com/r", auth_mode="api_key"
+        )
+        Path(meta.host_clone_path).mkdir(parents=True, exist_ok=True)
+
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+        mocker.patch(f"{CLI}.copy_from_container")
+        mock_rsync = mocker.patch(f"{CLI}.subprocess.run")
+
+        result = runner.invoke(app, ["export", "myenv", "--yes", "--delete"])
+        assert result.exit_code == 0
+
+        rsync_cmd = mock_rsync.call_args[0][0]
+        assert "--delete" in rsync_cmd
+
+
+class TestExportProtect:
+    """Export --protect and .cageprotect patterns become rsync --exclude flags."""
+
+    def test_protect_flag_adds_excludes(self, mocker, mock_trusty_cage_dir):
+        from pathlib import Path
+
+        from trusty_cage.environment import create_meta
+
+        meta = create_meta(
+            name="myenv", repo_url="https://a.com/r", auth_mode="api_key"
+        )
+        Path(meta.host_clone_path).mkdir(parents=True, exist_ok=True)
+
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+        mocker.patch(f"{CLI}.copy_from_container")
+        mock_rsync = mocker.patch(f"{CLI}.subprocess.run")
+
+        result = runner.invoke(
+            app,
+            ["export", "myenv", "--yes", "--protect", "*.md", "--protect", "*.env"],
+        )
+        assert result.exit_code == 0
+
+        rsync_cmd = mock_rsync.call_args[0][0]
+        assert "--exclude" in rsync_cmd
+        excludes = [
+            rsync_cmd[i + 1]
+            for i in range(len(rsync_cmd))
+            if rsync_cmd[i] == "--exclude"
+        ]
+        assert "*.md" in excludes
+        assert "*.env" in excludes
+
+    def test_cageprotect_file_patterns(self, mocker, mock_trusty_cage_dir):
+        from pathlib import Path
+
+        from trusty_cage.environment import create_meta
+
+        meta = create_meta(
+            name="myenv", repo_url="https://a.com/r", auth_mode="api_key"
+        )
+        host_clone = Path(meta.host_clone_path)
+        host_clone.mkdir(parents=True, exist_ok=True)
+        (host_clone / ".cageprotect").write_text("secrets/\n# comment\n\nbackup.sql\n")
+
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+        mocker.patch(f"{CLI}.copy_from_container")
+        mock_rsync = mocker.patch(f"{CLI}.subprocess.run")
+
+        result = runner.invoke(app, ["export", "myenv", "--yes"])
+        assert result.exit_code == 0
+
+        rsync_cmd = mock_rsync.call_args[0][0]
+        excludes = [
+            rsync_cmd[i + 1]
+            for i in range(len(rsync_cmd))
+            if rsync_cmd[i] == "--exclude"
+        ]
+        assert "secrets/" in excludes
+        assert "backup.sql" in excludes
+        assert "# comment" not in excludes
+
+    def test_gitignore_and_cageprotect_merged(self, mocker, mock_trusty_cage_dir):
+        from pathlib import Path
+
+        from trusty_cage.environment import create_meta
+
+        meta = create_meta(
+            name="myenv", repo_url="https://a.com/r", auth_mode="api_key"
+        )
+        host_clone = Path(meta.host_clone_path)
+        host_clone.mkdir(parents=True, exist_ok=True)
+        (host_clone / ".gitignore").write_text("venv/\n__pycache__/\n")
+        (host_clone / ".cageprotect").write_text("secrets/\nvenv/\n")
+
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+        mocker.patch(f"{CLI}.copy_from_container")
+        mock_rsync = mocker.patch(f"{CLI}.subprocess.run")
+
+        result = runner.invoke(app, ["export", "myenv", "--yes"])
+        assert result.exit_code == 0
+
+        rsync_cmd = mock_rsync.call_args[0][0]
+        excludes = [
+            rsync_cmd[i + 1]
+            for i in range(len(rsync_cmd))
+            if rsync_cmd[i] == "--exclude"
+        ]
+        assert excludes.count("venv/") == 1
+        assert "__pycache__/" in excludes
+        assert "secrets/" in excludes
+
+
+class TestDiffCommand:
+    """Tests for tc diff."""
+
+    def test_fails_when_env_not_found(self, mocker, mock_trusty_cage_dir):
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        result = runner.invoke(app, ["diff", "nonexistent"])
+        assert result.exit_code != 0
+        assert "not found" in result.output
+
+    def test_diff_no_changes(self, mocker, mock_trusty_cage_dir):
+        from pathlib import Path
+
+        from trusty_cage.environment import create_meta
+
+        meta = create_meta(
+            name="myenv", repo_url="https://a.com/r", auth_mode="api_key"
+        )
+        Path(meta.host_clone_path).mkdir(parents=True, exist_ok=True)
+
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+        mocker.patch(f"{CLI}.copy_from_container")
+        mocker.patch(
+            f"{CLI}.subprocess.run",
+            return_value=subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="", stderr=""
+            ),
+        )
+
+        result = runner.invoke(app, ["diff", "myenv"])
+        assert result.exit_code == 0
+        assert "No differences" in result.output
+
+    def test_diff_summary_output(self, mocker, mock_trusty_cage_dir):
+        from pathlib import Path
+
+        from trusty_cage.environment import create_meta
+
+        meta = create_meta(
+            name="myenv", repo_url="https://a.com/r", auth_mode="api_key"
+        )
+        Path(meta.host_clone_path).mkdir(parents=True, exist_ok=True)
+
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+        mocker.patch(f"{CLI}.copy_from_container")
+
+        rsync_output = (
+            ">f+++++++++ new_file.py\n"
+            ">f.st...... changed.py\n"
+            "*deleting   old_file.py\n"
+        )
+        mocker.patch(
+            f"{CLI}.subprocess.run",
+            return_value=subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=rsync_output, stderr=""
+            ),
+        )
+
+        result = runner.invoke(app, ["diff", "myenv"])
+        assert result.exit_code == 0
+        assert "new_file.py" in result.output
+        assert "changed.py" in result.output
+        assert "old_file.py" in result.output
+        assert "3 file(s) changed" in result.output
+
+    def test_diff_respects_excludes(self, mocker, mock_trusty_cage_dir):
+        from pathlib import Path
+
+        from trusty_cage.environment import create_meta
+
+        meta = create_meta(
+            name="myenv", repo_url="https://a.com/r", auth_mode="api_key"
+        )
+        host_clone = Path(meta.host_clone_path)
+        host_clone.mkdir(parents=True, exist_ok=True)
+        (host_clone / ".gitignore").write_text("venv/\n")
+
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+        mocker.patch(f"{CLI}.copy_from_container")
+        mock_rsync = mocker.patch(
+            f"{CLI}.subprocess.run",
+            return_value=subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="", stderr=""
+            ),
+        )
+
+        result = runner.invoke(app, ["diff", "myenv"])
+        assert result.exit_code == 0
+
+        rsync_cmd = mock_rsync.call_args[0][0]
+        excludes = [
+            rsync_cmd[i + 1]
+            for i in range(len(rsync_cmd))
+            if rsync_cmd[i] == "--exclude"
+        ]
+        assert ".git/" in excludes
+        assert "venv/" in excludes
+        assert "--dry-run" in rsync_cmd
+        assert "-i" in rsync_cmd
+
+    def test_diff_with_output_dir(self, mocker, mock_trusty_cage_dir, tmp_path):
+        from trusty_cage.environment import create_meta
+
+        create_meta(name="myenv", repo_url="https://a.com/r", auth_mode="api_key")
+
+        output_dir = tmp_path / "custom"
+        output_dir.mkdir()
+
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+        mocker.patch(f"{CLI}.copy_from_container")
+        mock_rsync = mocker.patch(
+            f"{CLI}.subprocess.run",
+            return_value=subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="", stderr=""
+            ),
+        )
+
+        result = runner.invoke(
+            app, ["diff", "myenv", "--output-dir", str(output_dir)]
+        )
+        assert result.exit_code == 0
+
+        rsync_cmd = mock_rsync.call_args[0][0]
+        assert str(output_dir) + "/" == rsync_cmd[-1]
+
+
+class TestSyncCommand:
+    """Tests for tc sync."""
+
+    def test_fails_when_env_not_found(self, mocker, mock_trusty_cage_dir):
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        result = runner.invoke(app, ["sync", "nonexistent", "--yes"])
+        assert result.exit_code != 0
+        assert "not found" in result.output
+
+    def test_sync_all_files(self, mocker, mock_trusty_cage_dir):
+        from pathlib import Path
+
+        from trusty_cage.environment import create_meta
+
+        meta = create_meta(
+            name="myenv", repo_url="https://a.com/r", auth_mode="api_key"
+        )
+        host_clone = Path(meta.host_clone_path)
+        host_clone.mkdir(parents=True, exist_ok=True)
+        (host_clone / "main.py").write_text("print('hello')")
+
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+        mock_rsync = mocker.patch(f"{CLI}.subprocess.run")
+        mocker.patch(f"{CLI}.copy_to_container")
+        mocker.patch(f"{CLI}.container_exec")
+
+        result = runner.invoke(app, ["sync", "myenv", "--yes"])
+        assert result.exit_code == 0
+        assert "Synced" in result.output
+        assert "all files" in result.output
+
+        rsync_cmd = mock_rsync.call_args[0][0]
+        assert rsync_cmd[0] == "rsync"
+        assert str(host_clone) + "/" in rsync_cmd
+
+    def test_sync_specific_files(self, mocker, mock_trusty_cage_dir):
+        from pathlib import Path
+
+        from trusty_cage.environment import create_meta
+
+        meta = create_meta(
+            name="myenv", repo_url="https://a.com/r", auth_mode="api_key"
+        )
+        host_clone = Path(meta.host_clone_path)
+        host_clone.mkdir(parents=True, exist_ok=True)
+        (host_clone / "main.py").write_text("print('hello')")
+
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+        mocker.patch(f"{CLI}.copy_to_container")
+        mocker.patch(f"{CLI}.container_exec")
+
+        result = runner.invoke(
+            app, ["sync", "myenv", "--yes", "--files", "main.py"]
+        )
+        assert result.exit_code == 0
+        assert "1 file(s)" in result.output
+
+    def test_sync_nonexistent_file_errors(self, mocker, mock_trusty_cage_dir):
+        from pathlib import Path
+
+        from trusty_cage.environment import create_meta
+
+        meta = create_meta(
+            name="myenv", repo_url="https://a.com/r", auth_mode="api_key"
+        )
+        Path(meta.host_clone_path).mkdir(parents=True, exist_ok=True)
+
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+
+        result = runner.invoke(
+            app, ["sync", "myenv", "--yes", "--files", "nonexistent.py"]
+        )
+        assert result.exit_code != 0
+        assert "not found" in result.output
+
+    def test_sync_excludes_git(self, mocker, mock_trusty_cage_dir):
+        from pathlib import Path
+
+        from trusty_cage.environment import create_meta
+
+        meta = create_meta(
+            name="myenv", repo_url="https://a.com/r", auth_mode="api_key"
+        )
+        host_clone = Path(meta.host_clone_path)
+        host_clone.mkdir(parents=True, exist_ok=True)
+
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+        mock_rsync = mocker.patch(f"{CLI}.subprocess.run")
+        mocker.patch(f"{CLI}.copy_to_container")
+        mocker.patch(f"{CLI}.container_exec")
+
+        result = runner.invoke(app, ["sync", "myenv", "--yes"])
+        assert result.exit_code == 0
+
+        rsync_cmd = mock_rsync.call_args[0][0]
+        excludes = [
+            rsync_cmd[i + 1]
+            for i in range(len(rsync_cmd))
+            if rsync_cmd[i] == "--exclude"
+        ]
+        assert ".git/" in excludes
+
+
+class TestLaunchInjectMessaging:
+    """Tests for --inject-messaging on launch command."""
+
+    def test_inject_messaging_default(self, mocker, mock_trusty_cage_dir):
+        from trusty_cage.environment import create_meta
+
+        create_meta(
+            name="myenv", repo_url="https://a.com/r", auth_mode="subscription"
+        )
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+        mock_exec = mocker.patch(
+            f"{CLI}.container_exec",
+            return_value=subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="", stderr=""
+            ),
+        )
+
+        result = runner.invoke(app, ["launch", "myenv", "--prompt", "do stuff"])
+        assert result.exit_code == 0
+
+        cmd = mock_exec.call_args[0][1]
+        bash_cmd = cmd[2]
+        assert "cage-send" in bash_cmd
+        assert "task_complete" in bash_cmd
+
+    def test_no_inject_messaging(self, mocker, mock_trusty_cage_dir):
+        from trusty_cage.environment import create_meta
+
+        create_meta(
+            name="myenv", repo_url="https://a.com/r", auth_mode="subscription"
+        )
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+        mock_exec = mocker.patch(
+            f"{CLI}.container_exec",
+            return_value=subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="", stderr=""
+            ),
+        )
+
+        result = runner.invoke(
+            app,
+            ["launch", "myenv", "--prompt", "do stuff", "--no-inject-messaging"],
+        )
+        assert result.exit_code == 0
+
+        cmd = mock_exec.call_args[0][1]
+        bash_cmd = cmd[2]
+        assert "cage-send" not in bash_cmd
+
+    def test_inject_messaging_not_in_test_mode(self, mocker, mock_trusty_cage_dir):
+        from trusty_cage.environment import create_meta
+
+        create_meta(
+            name="myenv", repo_url="https://a.com/r", auth_mode="subscription"
+        )
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+        mock_exec = mocker.patch(
+            f"{CLI}.container_exec",
+            return_value=subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="claude 1.0.0", stderr=""
+            ),
+        )
+
+        result = runner.invoke(app, ["launch", "myenv", "--test"])
+        assert result.exit_code == 0
+        cmd = mock_exec.call_args[0][1]
+        assert cmd == ["claude", "--version"]
