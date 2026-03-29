@@ -386,6 +386,106 @@ class TestExportOutputDir:
         assert "does not exist" in result.output
 
 
+class TestExportGitignoreExcludes:
+    def test_no_gitignore_only_excludes_git(self, mocker, mock_trusty_cage_dir, tmp_path):
+        """
+        Without a .gitignore, rsync should only exclude .git/.
+        """
+        from trusty_cage.environment import create_meta
+
+        meta = create_meta(
+            name="myenv", repo_url="https://a.com/r", auth_mode="api_key"
+        )
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+        mocker.patch(f"{CLI}.copy_from_container")
+        mock_rsync = mocker.patch(f"{CLI}.subprocess.run")
+
+        from pathlib import Path
+
+        Path(meta.host_clone_path).mkdir(parents=True, exist_ok=True)
+
+        result = runner.invoke(app, ["export", "myenv", "--yes"])
+        assert result.exit_code == 0
+
+        rsync_cmd = mock_rsync.call_args[0][0]
+        # Only one --exclude pair: .git/
+        exclude_args = [
+            rsync_cmd[i + 1]
+            for i in range(len(rsync_cmd))
+            if rsync_cmd[i] == "--exclude"
+        ]
+        assert exclude_args == [".git/"]
+
+    def test_gitignore_patterns_added_as_excludes(
+        self, mocker, mock_trusty_cage_dir, tmp_path
+    ):
+        """
+        .gitignore entries should appear as additional --exclude flags.
+        """
+        from trusty_cage.environment import create_meta
+
+        meta = create_meta(
+            name="myenv", repo_url="https://a.com/r", auth_mode="api_key"
+        )
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+        mocker.patch(f"{CLI}.copy_from_container")
+        mock_rsync = mocker.patch(f"{CLI}.subprocess.run")
+
+        from pathlib import Path
+
+        host_clone = Path(meta.host_clone_path)
+        host_clone.mkdir(parents=True, exist_ok=True)
+        (host_clone / ".gitignore").write_text("venv/\n.env\n__pycache__/\n")
+
+        result = runner.invoke(app, ["export", "myenv", "--yes"])
+        assert result.exit_code == 0
+
+        rsync_cmd = mock_rsync.call_args[0][0]
+        exclude_args = [
+            rsync_cmd[i + 1]
+            for i in range(len(rsync_cmd))
+            if rsync_cmd[i] == "--exclude"
+        ]
+        assert exclude_args == [".git/", "venv/", ".env", "__pycache__/"]
+
+    def test_gitignore_skips_comments_and_blanks(
+        self, mocker, mock_trusty_cage_dir, tmp_path
+    ):
+        """
+        Comments and blank lines in .gitignore should be ignored.
+        """
+        from trusty_cage.environment import create_meta
+
+        meta = create_meta(
+            name="myenv", repo_url="https://a.com/r", auth_mode="api_key"
+        )
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+        mocker.patch(f"{CLI}.copy_from_container")
+        mock_rsync = mocker.patch(f"{CLI}.subprocess.run")
+
+        from pathlib import Path
+
+        host_clone = Path(meta.host_clone_path)
+        host_clone.mkdir(parents=True, exist_ok=True)
+        (host_clone / ".gitignore").write_text(
+            "# Python artifacts\n\nvenv/\n\n# Secrets\n.env\n  \n"
+        )
+
+        result = runner.invoke(app, ["export", "myenv", "--yes"])
+        assert result.exit_code == 0
+
+        rsync_cmd = mock_rsync.call_args[0][0]
+        exclude_args = [
+            rsync_cmd[i + 1]
+            for i in range(len(rsync_cmd))
+            if rsync_cmd[i] == "--exclude"
+        ]
+        assert exclude_args == [".git/", "venv/", ".env"]
+
+
 class TestAttachCommand:
     def test_fails_when_env_not_found(self, mocker, mock_trusty_cage_dir):
         mocker.patch(f"{CLI}.is_docker_running", return_value=True)

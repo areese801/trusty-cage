@@ -626,17 +626,32 @@ def export(
         if exported_git.exists():
             shutil.rmtree(exported_git)
 
-        # rsync into export target, preserving .git/
-        subprocess.run(
+        # Build rsync command, preserving .git/ and gitignored paths
+        rsync_cmd = [
+            "rsync",
+            "-a",
+            "--delete",
+            "--exclude",
+            ".git/",
+        ]
+
+        # Protect host-only paths that match .gitignore patterns from --delete
+        gitignore_path = export_target / ".gitignore"
+        if gitignore_path.is_file():
+            for line in gitignore_path.read_text().splitlines():
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    rsync_cmd.extend(["--exclude", line])
+
+        rsync_cmd.extend(
             [
-                "rsync",
-                "-a",
-                "--delete",
-                "--exclude",
-                ".git/",
                 str(export_dir) + "/",
                 str(export_target) + "/",
-            ],
+            ]
+        )
+
+        subprocess.run(
+            rsync_cmd,
             check=True,
             capture_output=True,
             text=True,
