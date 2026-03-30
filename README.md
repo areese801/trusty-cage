@@ -129,6 +129,23 @@ trusty-cage export hello-world
 trusty-cage destroy hello-world
 ```
 
+## Example: Local Directory
+
+No remote repo? Use `--dir` to create a cage from any local directory:
+
+```bash
+# Create from current directory
+trusty-cage create --dir . --name my-project --no-attach
+
+# Or from an explicit path
+trusty-cage create --dir ~/projects/my-project --no-attach
+
+# Everything else works the same
+trusty-cage attach my-project
+trusty-cage export my-project
+trusty-cage destroy my-project
+```
+
 ## Commands
 
 | Command | Description |
@@ -136,6 +153,7 @@ trusty-cage destroy hello-world
 | `trusty-cage --version` | Show version and exit |
 | `trusty-cage init [--force]` | Create config directory and default `.env` file |
 | `trusty-cage create <url> [--name] [--no-attach] [--auth-mode] [--dockerfile]` | Create a new environment from a git repo |
+| `trusty-cage create --dir <path> [--name] [--no-attach] [--auth-mode] [--dockerfile]` | Create from a local directory (no remote required) |
 | `trusty-cage attach <name>` | Attach to an existing environment |
 | `trusty-cage stop <name>` | Stop a container (preserves work) |
 | `trusty-cage list [--json]` | List all environments with status |

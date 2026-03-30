@@ -8,6 +8,7 @@ from trusty_cage.environment import (
     MetaJson,
     create_meta,
     derive_name,
+    derive_name_from_path,
     env_exists,
     get_env_dir,
     list_envs,
@@ -32,6 +33,27 @@ class TestDeriveName:
 
     def test_sanitizes_special_chars(self):
         assert derive_name("https://example.com/user/my repo!") == "my-repo-"
+
+
+class TestDeriveNameFromPath:
+    def test_simple_directory(self, tmp_path):
+        d = tmp_path / "my-project"
+        d.mkdir()
+        assert derive_name_from_path(str(d)) == "my-project"
+
+    def test_uppercase_sanitized(self, tmp_path):
+        d = tmp_path / "My-Cool-Project"
+        d.mkdir()
+        assert derive_name_from_path(str(d)) == "my-cool-project"
+
+    def test_special_chars(self, tmp_path):
+        d = tmp_path / "my project!"
+        d.mkdir()
+        assert derive_name_from_path(str(d)) == "my-project-"
+
+    def test_current_dir(self):
+        name = derive_name_from_path(".")
+        assert name  # should return something non-empty
 
 
 class TestGetEnvDir:

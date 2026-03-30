@@ -54,6 +54,17 @@ def derive_name(url: str) -> str:
     return name.lower()
 
 
+def derive_name_from_path(dir_path: str) -> str:
+    """
+    Derive an environment name from a local directory path.
+
+    Uses the directory basename, sanitized the same way as derive_name.
+    """
+    name = Path(dir_path).resolve().name
+    name = re.sub(r"[^a-zA-Z0-9_-]", "-", name)
+    return name.lower()
+
+
 def get_env_dir(name: str) -> Path:
     """
     Get the directory for a named environment.

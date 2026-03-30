@@ -141,6 +141,135 @@ class TestCreateCommand:
         assert "created successfully" in result.output
 
 
+class TestCreateFromDir:
+    """Tests for tc create --dir."""
+
+    def _mock_create_deps(self, mocker, mock_trusty_cage_dir):
+        """Mock all external dependencies for create --dir tests."""
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.build_if_needed")
+        mocker.patch(f"{CLI}.volume_create")
+        mocker.patch(f"{CLI}.container_create")
+        mocker.patch(f"{CLI}.container_start")
+        mocker.patch(f"{CLI}.copy_to_container")
+        mocker.patch(f"{CLI}.container_exec")
+        mocker.patch(f"{CLI}.init_messaging_dirs")
+
+        def fake_rsync(*args, **kwargs):
+            """Simulate rsync by creating dest dir with a marker file."""
+            cmd = args[0] if args else kwargs.get("args", [])
+            # rsync dest is the last arg (ends with /)
+            dest = cmd[-1].rstrip("/")
+            from pathlib import Path
+
+            Path(dest).mkdir(parents=True, exist_ok=True)
+            (Path(dest) / "README.md").write_text("# copied")
+            return subprocess.CompletedProcess(cmd, 0)
+
+        mocker.patch(f"{CLI}.subprocess.run", side_effect=fake_rsync)
+
+    def test_create_with_dir_flag(self, mocker, mock_trusty_cage_dir, tmp_path):
+        self._mock_create_deps(mocker, mock_trusty_cage_dir)
+        source = tmp_path / "myproject"
+        source.mkdir()
+        (source / "main.py").write_text("print('hello')")
+
+        result = runner.invoke(
+            app,
+            ["create", "--dir", str(source), "--no-attach", "--auth-mode", "api_key"],
+        )
+        assert result.exit_code == 0
+        assert "created successfully" in result.output
+
+    def test_create_dir_derives_name(self, mocker, mock_trusty_cage_dir, tmp_path):
+        self._mock_create_deps(mocker, mock_trusty_cage_dir)
+        source = tmp_path / "My-Cool-Project"
+        source.mkdir()
+        (source / "README.md").write_text("# hello")
+
+        result = runner.invoke(
+            app,
+            ["create", "--dir", str(source), "--no-attach", "--auth-mode", "api_key"],
+        )
+        assert result.exit_code == 0
+        assert "my-cool-project" in result.output
+
+    def test_create_dir_with_explicit_name(
+        self, mocker, mock_trusty_cage_dir, tmp_path
+    ):
+        self._mock_create_deps(mocker, mock_trusty_cage_dir)
+        source = tmp_path / "myproject"
+        source.mkdir()
+        (source / "main.py").write_text("print('hello')")
+
+        result = runner.invoke(
+            app,
+            [
+                "create",
+                "--dir",
+                str(source),
+                "--name",
+                "custom-name",
+                "--no-attach",
+                "--auth-mode",
+                "api_key",
+            ],
+        )
+        assert result.exit_code == 0
+        assert "custom-name" in result.output
+
+    def test_create_dir_and_url_both_errors(self, mocker, mock_trusty_cage_dir, tmp_path):
+        source = tmp_path / "myproject"
+        source.mkdir()
+
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        result = runner.invoke(
+            app,
+            [
+                "create",
+                "https://github.com/user/repo",
+                "--dir",
+                str(source),
+                "--no-attach",
+            ],
+        )
+        assert result.exit_code != 0
+        assert "not both" in result.output
+
+    def test_create_neither_dir_nor_url_errors(self, mocker, mock_trusty_cage_dir):
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        result = runner.invoke(app, ["create", "--no-attach"])
+        assert result.exit_code != 0
+        assert "Provide a git repo URL or --dir" in result.output
+
+    def test_create_dir_nonexistent_errors(self, mocker, mock_trusty_cage_dir):
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        result = runner.invoke(
+            app, ["create", "--dir", "/tmp/does-not-exist-xyz", "--no-attach"]
+        )
+        assert result.exit_code != 0
+        assert "does not exist" in result.output
+
+    def test_create_dir_meta_has_empty_repo_url(
+        self, mocker, mock_trusty_cage_dir, tmp_path
+    ):
+        self._mock_create_deps(mocker, mock_trusty_cage_dir)
+        source = tmp_path / "myproject"
+        source.mkdir()
+        (source / "main.py").write_text("print('hello')")
+
+        result = runner.invoke(
+            app,
+            ["create", "--dir", str(source), "--no-attach", "--auth-mode", "api_key"],
+        )
+        assert result.exit_code == 0
+
+        from trusty_cage.environment import load_meta
+
+        meta = load_meta("myproject")
+        assert meta.repo_url == ""
+
+
 class TestStopCommand:
     def test_fails_when_env_not_found(self, mocker, mock_trusty_cage_dir):
         mocker.patch(f"{CLI}.is_docker_running", return_value=True)

@@ -48,6 +48,7 @@ from trusty_cage.dotfiles import apply_dotfiles
 from trusty_cage.environment import (
     create_meta,
     derive_name,
+    derive_name_from_path,
     env_exists,
     get_env_dir,
     list_envs as get_all_envs,
@@ -124,9 +125,14 @@ def init(
 
 @app.command()
 def create(
-    git_repo_url: str = typer.Argument(help="URL of the git repository to clone"),
+    git_repo_url: Optional[str] = typer.Argument(
+        None, help="URL of the git repository to clone"
+    ),
     name: Optional[str] = typer.Option(
         None, help="Override the derived environment name"
+    ),
+    dir_path: Optional[str] = typer.Option(
+        None, "--dir", help="Create from a local directory instead of cloning a URL"
     ),
     no_attach: bool = typer.Option(
         False, "--no-attach", help="Create without attaching"
@@ -141,12 +147,40 @@ def create(
     ),
 ) -> None:
     """
-    Create a new isolated development environment from a git repo.
+    Create a new isolated development environment from a git repo or local directory.
     """
     _require_docker()
 
+    # Validate: exactly one source
+    if git_repo_url and dir_path:
+        rprint(
+            "[bold red]Error: Provide either a git repo URL or --dir, not both.[/bold red]"
+        )
+        raise typer.Exit(1)
+    if not git_repo_url and not dir_path:
+        rprint(
+            "[bold red]Error: Provide a git repo URL or --dir <path>.[/bold red]"
+        )
+        raise typer.Exit(1)
+
+    # Resolve and validate --dir
+    source_dir: Optional[Path] = None
+    if dir_path:
+        source_dir = Path(dir_path).resolve()
+        if not source_dir.is_dir():
+            rprint(
+                f"[bold red]Error: Directory does not exist: {source_dir}[/bold red]"
+            )
+            raise typer.Exit(1)
+
     # Derive or validate name (always lowercase for Docker compatibility)
-    env_name = name.lower() if name else derive_name(git_repo_url)
+    if name:
+        env_name = name.lower()
+    elif git_repo_url:
+        env_name = derive_name(git_repo_url)
+    else:
+        env_name = derive_name_from_path(str(source_dir))
+
     if env_exists(env_name):
         rprint(f"[bold red]Error: Environment '{env_name}' already exists.[/bold red]")
         raise typer.Exit(1)
@@ -178,14 +212,14 @@ def create(
         is_custom=is_custom,
     )
 
-    # Git clone to host (reuse existing clone if present from a prior destroy)
+    # Set up host clone directory
     env_dir = get_env_dir(env_name)
     env_dir.mkdir(parents=True, exist_ok=True)
     host_clone = env_dir / "repo"
 
     if host_clone.exists() and any(host_clone.iterdir()):
         rprint(f"[dim]Reusing existing host clone at {host_clone}[/dim]")
-    else:
+    elif git_repo_url:
         rprint(f"[bold blue]Cloning {git_repo_url}...[/bold blue]")
         try:
             subprocess.run(
@@ -197,11 +231,27 @@ def create(
         except subprocess.CalledProcessError as e:
             rprint(f"[bold red]Git clone failed: {e.stderr.strip()}[/bold red]")
             raise typer.Exit(1)
+    else:
+        rprint(f"[bold blue]Copying {source_dir} to host clone...[/bold blue]")
+        subprocess.run(
+            [
+                "rsync",
+                "-a",
+                "--exclude",
+                ".git/",
+                str(source_dir) + "/",
+                str(host_clone) + "/",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
 
     # Write meta.json
+    repo_url = git_repo_url or ""
     meta = create_meta(
         name=env_name,
-        repo_url=git_repo_url,
+        repo_url=repo_url,
         auth_mode=auth_mode,
     )
 
@@ -549,7 +599,7 @@ def list_envs(
         table.add_row(
             meta.name,
             status_styles.get(status, status),
-            meta.repo_url,
+            meta.repo_url or "(local)",
             created,
             meta.auth_mode,
         )
@@ -701,7 +751,8 @@ def export(
     rprint(f"  cd {export_target}")
     rprint("  git diff")
     rprint("  git add -A && git commit -m 'work from trusty-cage'")
-    rprint("  git push")
+    if meta.repo_url:
+        rprint("  git push")
 
 
 @app.command()

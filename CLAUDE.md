@@ -50,6 +50,7 @@ The CLI is available as `trusty-cage` or the short alias `tc`.
 |---|---|
 | `init [--force]` | Create config directory and default `.env` file |
 | `create <git-repo-url> [--name] [--no-attach] [--auth-mode] [--dockerfile]` | Clone repo, build image, create container+volume, copy files in, init local git, apply dotfiles, attach |
+| `create --dir <path> [--name] [--no-attach] [--auth-mode] [--dockerfile]` | Same as above but copies from a local directory instead of cloning a URL |
 | `attach <name>` | Start container if stopped, apply iptables, create/attach tmux session |
 | `stop <name>` | Stop container (preserves volume) |
 | `list [--json]` | Show all environments with status, date, repo URL |
@@ -103,6 +104,20 @@ Chosen at `create` time, stored in `meta.json`:
 ### Imports
 - All imports must be at the top of the file — no inline or lazy imports inside functions
 - This applies to all Python files in the project
+
+## Testing Workflow
+
+Before committing, always:
+
+1. **Run pytest** — all unit tests must pass (`pytest` or `pytest -v`)
+2. **Install in dev mode** — `pip install -e .` to pick up changes
+3. **Test from the terminal** — run `tc` commands manually to verify:
+   - CLI help renders correctly for changed commands (`tc <cmd> --help`)
+   - Error paths return exit code 1 with clear messages
+   - Happy paths work end-to-end with a real Docker container (create, diff, export, sync, destroy)
+   - Regression: existing functionality still works alongside new features
+
+Terminal testing catches issues that unit tests with mocked Docker calls miss (argument parsing edge cases, rsync behavior, file permission issues).
 
 ## Git Workflow
 
