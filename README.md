@@ -140,14 +140,70 @@ trusty-cage destroy hello-world
 | `trusty-cage stop <name>` | Stop a container (preserves work) |
 | `trusty-cage list [--json]` | List all environments with status |
 | `trusty-cage exists <name>` | Check if an environment exists (exit code 0/1) |
-| `trusty-cage export <name> [-y/--yes] [--output-dir]` | Copy work back to host clone |
+| `trusty-cage export <name> [-y/--yes] [--output-dir] [--delete] [--protect]` | Copy work back to host clone (safe default: no `--delete`) |
+| `trusty-cage diff <name> [--full] [--output-dir]` | Preview what `export` would change (dry run) |
+| `trusty-cage sync <name> [--files] [-y/--yes]` | Push host files into a cage (inverse of export) |
 | `trusty-cage destroy <name> [-y/--yes]` | Remove container and volume (keeps host clone) |
 | `trusty-cage rebuild-image [--dockerfile]` | Force rebuild the Docker image |
 | `trusty-cage auth <name> [--login]` | Refresh or verify credentials for an environment |
-| `trusty-cage launch <name> -p/--prompt\|--prompt-file\|--test [--background]` | Launch Claude Code inside a cage |
+| `trusty-cage launch <name> -p/--prompt\|--prompt-file\|--test [--background] [--no-inject-messaging]` | Launch Claude Code inside a cage (messaging instructions injected by default) |
 | `trusty-cage logs [name] [-f] [-r/--raw] [-n/--lines N]` | Stream inner Claude's reasoning (pretty-printed by default) |
 | `trusty-cage outbox <name> [-a/--all] [--json] [--poll] [--timeout] [--interval]` | Read messages from a cage's outbox |
 | `trusty-cage inbox <name> <type> <payload_json>` | Send a message to a cage's inbox |
+
+## Export, Diff, and Sync
+
+### Safe Export (default)
+
+By default, `tc export` copies cage files onto the host **without** deleting host-only files. This prevents accidental removal of `.gitignore`, `venv/`, `.env`, and other files that exist only on the host.
+
+```bash
+tc export myenv -y                     # safe: adds/updates files, never deletes
+tc export myenv -y --delete            # opt-in: mirror cage exactly (deletes host-only files)
+tc export myenv -y --protect "*.md"    # exclude additional patterns from sync
+```
+
+Files matching `.gitignore` and `.cageprotect` patterns are always excluded from both overwrite and deletion, even with `--delete`.
+
+### `.cageprotect` file
+
+Create a `.cageprotect` file in your project root to protect host-only files during export. Same format as `.gitignore` — one pattern per line, `#` for comments:
+
+```
+# Host-only config
+CLAUDE.md
+.env.production
+secrets/
+```
+
+### Preview with `tc diff`
+
+See what `tc export` would change before running it:
+
+```bash
+tc diff myenv                          # summary table (added/modified/deleted)
+tc diff myenv --full                   # full unified diffs
+tc diff myenv --output-dir .           # compare against a specific directory
+```
+
+### Push fixes with `tc sync`
+
+After exporting and fixing something on the host, push changes back into a running cage:
+
+```bash
+tc sync myenv -y                       # sync all host files into cage
+tc sync myenv -y --files "main.py"     # sync specific files only
+```
+
+### Typical workflow
+
+```bash
+tc diff myenv                          # preview changes
+tc export myenv -y                     # export (safe default)
+# ... fix something on the host ...
+tc sync myenv -y --files "fixed.py"    # push fix back into cage
+tc launch myenv --prompt "Continue"    # resume work in cage
+```
 
 ## Configuration
 
@@ -362,7 +418,7 @@ The messaging system is initialized automatically during `tc create`. The new `t
 
 ### Using the Cage Orchestrator Skill
 
-The easiest way to use trusty-cage in headless mode is through the **cage-orchestrator** skill (part of [agent_skills](https://github.com/areese801/agent_skills)). Instead of running CLI commands manually, you tell your outer Claude to delegate work to an isolated cage:
+The easiest way to use trusty-cage in headless mode is through the **cage-orchestrator** skill. Instead of running CLI commands manually, you tell your outer Claude to delegate work to an isolated cage:
 
 > "Spin up a cage and implement feature X in this repo"
 
@@ -379,7 +435,16 @@ The cage-orchestrator skill handles the full lifecycle automatically:
 
 The inner Claude works with full autonomy inside the container — installing packages, editing files, running tests — while the outer Claude keeps you informed and handles anything that requires host access (git push, file retrieval, approvals).
 
-To use the skill, install the [agent_skills](https://github.com/areese801/agent_skills) repo as a Claude Code skill source. The skill activates when you ask Claude to run something in a cage.
+#### Install the skills
+
+Install the companion plugin by running these commands inside a [Claude Code](https://claude.ai/code) session:
+
+```
+/plugin marketplace add areese801/trusty-cage-plugin
+/plugin install trusty-cage@trusty-cage-plugin
+```
+
+The skills activate automatically when you ask Claude to run something in a cage. See [trusty-cage-plugin](https://github.com/areese801/trusty-cage-plugin) for details.
 
 ## Security Model
 
