@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import IO, Optional
 
@@ -33,6 +34,7 @@ from trusty_cage.docker import (
     container_exec,
     container_exists,
     container_is_running,
+    container_recreate,
     container_remove,
     container_start,
     container_stop,
@@ -46,6 +48,7 @@ from trusty_cage.docker import (
 )
 from trusty_cage.dotfiles import apply_dotfiles
 from trusty_cage.environment import (
+    AdditionalDir,
     create_meta,
     derive_name,
     derive_name_from_path,
@@ -53,6 +56,7 @@ from trusty_cage.environment import (
     get_env_dir,
     list_envs as get_all_envs,
     load_meta,
+    save_meta,
 )
 from trusty_cage.image import build_if_needed, rebuild, resolve_dockerfile
 from trusty_cage.messaging import (
@@ -145,6 +149,9 @@ def create(
         "--dockerfile",
         help="Path to a custom Dockerfile (replaces the default image)",
     ),
+    add_dirs: Optional[list[str]] = typer.Option(
+        None, "--add-dir", help="Additional local directories to include (repeatable)"
+    ),
 ) -> None:
     """
     Create a new isolated development environment from a git repo or local directory.
@@ -158,9 +165,7 @@ def create(
         )
         raise typer.Exit(1)
     if not git_repo_url and not dir_path:
-        rprint(
-            "[bold red]Error: Provide a git repo URL or --dir <path>.[/bold red]"
-        )
+        rprint("[bold red]Error: Provide a git repo URL or --dir <path>.[/bold red]")
         raise typer.Exit(1)
 
     # Resolve and validate --dir
@@ -259,11 +264,35 @@ def create(
     volume_create(meta.volume_name)
     rprint(f"[dim]Created volume {meta.volume_name}[/dim]")
 
-    volume_mount = f"{meta.volume_name}:{constants.CONTAINER_PROJECT_DIR}"
+    # Build volume mounts list (including --add-dir volumes)
+    volume_mounts = [f"{meta.volume_name}:{constants.CONTAINER_PROJECT_DIR}"]
+    add_dir_specs: list[
+        tuple[str, str, str, Path]
+    ] = []  # (ad_name, vol, cpath, source)
+    if add_dirs:
+        for add_dir_path in add_dirs:
+            add_source = Path(add_dir_path).resolve()
+            if not add_source.is_dir():
+                rprint(
+                    f"[bold red]Error: Directory does not exist: {add_source}[/bold red]"
+                )
+                raise typer.Exit(1)
+            ad_name = derive_name_from_path(str(add_source))
+            if ad_name == "project":
+                rprint(
+                    "[bold red]Error: Cannot use name 'project' — reserved.[/bold red]"
+                )
+                raise typer.Exit(1)
+            vol_name = f"{constants.VOLUME_PREFIX}{env_name}-{ad_name}"
+            container_path = f"{constants.CONTAINER_HOME}/{ad_name}"
+            volume_create(vol_name)
+            volume_mounts.append(f"{vol_name}:{container_path}")
+            add_dir_specs.append((ad_name, vol_name, container_path, add_source))
+
     container_create(
         name=meta.container_name,
         image=constants.IMAGE_TAG,
-        volume_mount=volume_mount,
+        volume_mounts=volume_mounts,
         hostname=env_name,
         cap_add=["NET_ADMIN"],
     )
@@ -343,6 +372,79 @@ def create(
     if auth_mode == "subscription":
         copy_subscription_credentials(meta.container_name)
         rprint("[dim]Copied subscription credentials into container.[/dim]")
+
+    # Add additional directories if specified
+    if add_dir_specs:
+        for ad_name, vol_name, container_path, add_source in add_dir_specs:
+            # Host clone
+            dirs_parent = env_dir / "dirs"
+            dirs_parent.mkdir(parents=True, exist_ok=True)
+            host_clone_dir = dirs_parent / ad_name
+            subprocess.run(
+                [
+                    "rsync",
+                    "-a",
+                    "--exclude",
+                    ".git/",
+                    str(add_source) + "/",
+                    str(host_clone_dir) + "/",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            # Copy into container
+            with tempfile.TemporaryDirectory(prefix="trusty-cage-adddir-") as td:
+                staging = Path(td) / "staging"
+                staging.mkdir()
+                for item in host_clone_dir.iterdir():
+                    if item.name == ".git":
+                        continue
+                    dest = staging / item.name
+                    if item.is_dir():
+                        shutil.copytree(item, dest, symlinks=True)
+                    else:
+                        shutil.copy2(item, dest)
+                copy_to_container(
+                    str(staging) + "/.",
+                    meta.container_name,
+                    container_path,
+                )
+
+            container_exec(
+                meta.container_name,
+                [
+                    "chown",
+                    "-R",
+                    f"{constants.CONTAINER_USER}:{constants.CONTAINER_USER}",
+                    container_path,
+                ],
+                user="root",
+            )
+            container_exec(
+                meta.container_name,
+                [
+                    "bash",
+                    "-c",
+                    f"cd {container_path} && git init -b main && git add . "
+                    f"&& git commit -m 'Initial commit (trusty-cage import)'",
+                ],
+                user=constants.CONTAINER_USER,
+            )
+
+            dir_entry = AdditionalDir(
+                name=ad_name,
+                host_source_path=str(add_source),
+                host_clone_path=str(host_clone_dir),
+                volume_name=vol_name,
+                container_path=container_path,
+                added_at=datetime.now(timezone.utc).isoformat(),
+            )
+            meta.additional_dirs.append(dir_entry.to_dict())
+            rprint(f"[dim]Added additional dir: {ad_name}[/dim]")
+
+        save_meta(meta)
 
     rprint(f"[bold green]Environment '{env_name}' created successfully.[/bold green]")
 
@@ -567,6 +669,7 @@ def list_envs(
                     "repo_url": meta.repo_url,
                     "created_at": created,
                     "auth_mode": meta.auth_mode,
+                    "additional_dirs": [d["name"] for d in meta.additional_dirs],
                 }
             )
 
@@ -583,6 +686,7 @@ def list_envs(
     table.add_column("Repo", style="dim")
     table.add_column("Created", style="dim")
     table.add_column("Auth", style="dim")
+    table.add_column("Dirs", style="dim")
 
     status_styles = {
         "running": "[green]running[/green]",
@@ -596,12 +700,18 @@ def list_envs(
         created = (
             meta.created_at[:10] if len(meta.created_at) >= 10 else meta.created_at
         )
+        dirs_str = (
+            ", ".join(d["name"] for d in meta.additional_dirs)
+            if meta.additional_dirs
+            else ""
+        )
         table.add_row(
             meta.name,
             status_styles.get(status, status),
             meta.repo_url or "(local)",
             created,
             meta.auth_mode,
+            dirs_str,
         )
 
     rprint(table)
@@ -618,6 +728,224 @@ def exists(
         raise typer.Exit(0)
     else:
         raise typer.Exit(1)
+
+
+def _build_volume_mounts(meta) -> list[str]:
+    """
+    Build the full list of volume mounts for a cage from its MetaJson.
+    """
+    mounts = [f"{meta.volume_name}:{constants.CONTAINER_PROJECT_DIR}"]
+    for d in meta.additional_dirs:
+        mounts.append(f"{d['volume_name']}:{d['container_path']}")
+    return mounts
+
+
+@app.command("add-dir")
+def add_dir(
+    name: str = typer.Argument(help="Name of the cage environment"),
+    dir_path: str = typer.Argument(help="Path to the local directory to add"),
+    dir_name: Optional[str] = typer.Option(
+        None, "--name", help="Override the derived directory name"
+    ),
+) -> None:
+    """
+    Add a local directory to an existing cage environment.
+    """
+    _require_docker()
+
+    if not env_exists(name):
+        rprint(f"[bold red]Error: Environment '{name}' not found.[/bold red]")
+        raise typer.Exit(1)
+
+    meta = load_meta(name)
+
+    # Resolve and validate source directory
+    source = Path(dir_path).resolve()
+    if not source.is_dir():
+        rprint(f"[bold red]Error: Directory does not exist: {source}[/bold red]")
+        raise typer.Exit(1)
+
+    # Derive or validate name
+    derived_name = dir_name or derive_name_from_path(str(source))
+
+    if derived_name == "project":
+        rprint(
+            "[bold red]Error: Cannot use name 'project' — reserved for main project.[/bold red]"
+        )
+        raise typer.Exit(1)
+
+    # Check for name collision with existing additional dirs
+    if meta.get_additional_dir(derived_name) is not None:
+        rprint(
+            f"[bold red]Error: Additional dir '{derived_name}' already exists "
+            f"in cage '{name}'.[/bold red]"
+        )
+        raise typer.Exit(1)
+
+    # Show derived name if it differs from basename (sanitization)
+    if derived_name != source.name.lower():
+        rprint(f"[dim]Derived name: {derived_name} (from {source.name})[/dim]")
+
+    # Create volume
+    vol_name = f"{constants.VOLUME_PREFIX}{name}-{derived_name}"
+    if not volume_exists(vol_name):
+        volume_create(vol_name)
+    rprint(f"[dim]Created volume {vol_name}[/dim]")
+
+    # Copy source to host clone
+    env_dir = get_env_dir(name)
+    dirs_parent = env_dir / "dirs"
+    dirs_parent.mkdir(parents=True, exist_ok=True)
+    host_clone = dirs_parent / derived_name
+
+    subprocess.run(
+        [
+            "rsync",
+            "-a",
+            "--exclude",
+            ".git/",
+            str(source) + "/",
+            str(host_clone) + "/",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    # Build full volume mounts list including the new dir
+    container_path = f"{constants.CONTAINER_HOME}/{derived_name}"
+    all_mounts = _build_volume_mounts(meta)
+    all_mounts.append(f"{vol_name}:{container_path}")
+
+    # Recreate container with new mount
+    rprint("[dim]Recreating container with new volume mount...[/dim]")
+    container_recreate(
+        name=meta.container_name,
+        image=constants.IMAGE_TAG,
+        volume_mounts=all_mounts,
+        hostname=meta.name,
+        cap_add=["NET_ADMIN"],
+    )
+
+    # Copy files into container
+    with tempfile.TemporaryDirectory(prefix="trusty-cage-adddir-") as tmpdir:
+        staging = Path(tmpdir) / "staging"
+        staging.mkdir()
+        for item in host_clone.iterdir():
+            if item.name == ".git":
+                continue
+            dest = staging / item.name
+            if item.is_dir():
+                shutil.copytree(item, dest, symlinks=True)
+            else:
+                shutil.copy2(item, dest)
+
+        copy_to_container(
+            str(staging) + "/.",
+            meta.container_name,
+            container_path,
+        )
+
+    # chown
+    container_exec(
+        meta.container_name,
+        [
+            "chown",
+            "-R",
+            f"{constants.CONTAINER_USER}:{constants.CONTAINER_USER}",
+            container_path,
+        ],
+        user="root",
+    )
+
+    # git init inside the new dir
+    container_exec(
+        meta.container_name,
+        [
+            "bash",
+            "-c",
+            f"cd {container_path} && git init -b main && git add . "
+            f"&& git commit -m 'Initial commit (trusty-cage import)'",
+        ],
+        user=constants.CONTAINER_USER,
+    )
+
+    # Update meta.json
+    dir_entry = AdditionalDir(
+        name=derived_name,
+        host_source_path=str(source),
+        host_clone_path=str(host_clone),
+        volume_name=vol_name,
+        container_path=container_path,
+        added_at=datetime.now(timezone.utc).isoformat(),
+    )
+    meta.additional_dirs.append(dir_entry.to_dict())
+    save_meta(meta)
+
+    rprint(f"[bold green]Added '{derived_name}' to cage '{name}'.[/bold green]")
+    rprint(f"[dim]Container path: {container_path}[/dim]")
+
+
+@app.command("remove-dir")
+def remove_dir(
+    name: str = typer.Argument(help="Name of the cage environment"),
+    dir_name: str = typer.Argument(help="Name of the additional directory to remove"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+) -> None:
+    """
+    Remove an additional directory from a cage environment.
+    """
+    _require_docker()
+
+    if not env_exists(name):
+        rprint(f"[bold red]Error: Environment '{name}' not found.[/bold red]")
+        raise typer.Exit(1)
+
+    meta = load_meta(name)
+
+    # Find the dir entry
+    dir_entry = meta.get_additional_dir(dir_name)
+    if dir_entry is None:
+        rprint(
+            f"[bold red]Error: Additional dir '{dir_name}' not found "
+            f"in cage '{name}'.[/bold red]"
+        )
+        raise typer.Exit(1)
+
+    if not yes and not Confirm.ask(
+        f"Remove '{dir_name}' from cage '{name}'? Volume and host clone will be deleted."
+    ):
+        rprint("[dim]Cancelled.[/dim]")
+        return
+
+    # Rebuild volume mounts list without the removed dir
+    meta.additional_dirs = [d for d in meta.additional_dirs if d["name"] != dir_name]
+    all_mounts = _build_volume_mounts(meta)
+
+    # Recreate container without the removed mount
+    rprint("[dim]Recreating container without removed volume mount...[/dim]")
+    container_recreate(
+        name=meta.container_name,
+        image=constants.IMAGE_TAG,
+        volume_mounts=all_mounts,
+        hostname=meta.name,
+        cap_add=["NET_ADMIN"],
+    )
+
+    # Remove volume
+    if volume_exists(dir_entry.volume_name):
+        volume_remove(dir_entry.volume_name)
+        rprint(f"[dim]Removed volume {dir_entry.volume_name}[/dim]")
+
+    # Remove host clone
+    host_clone = Path(dir_entry.host_clone_path)
+    if host_clone.exists():
+        shutil.rmtree(host_clone)
+
+    # Update meta.json
+    save_meta(meta)
+
+    rprint(f"[bold green]Removed '{dir_name}' from cage '{name}'.[/bold green]")
 
 
 def _collect_exclude_patterns(
@@ -654,15 +982,18 @@ def _collect_exclude_patterns(
     return patterns
 
 
-def _export_to_tempdir(container_name: str, tmpdir: Path) -> Path:
+def _export_to_tempdir(
+    container_name: str, tmpdir: Path, container_path: str | None = None
+) -> Path:
     """
-    Copy the container's project directory into a temp dir and strip .git/.
-    Returns the path to the exported project directory.
+    Copy a container directory into a temp dir and strip .git/.
+    Returns the path to the exported directory.
     """
-    export_dir = tmpdir / "project"
+    src_path = container_path or constants.CONTAINER_PROJECT_DIR
+    export_dir = tmpdir / "export"
     copy_from_container(
         container_name,
-        constants.CONTAINER_PROJECT_DIR + "/.",
+        src_path + "/.",
         str(export_dir),
     )
     exported_git = export_dir / ".git"
@@ -688,6 +1019,14 @@ def export(
         "--protect",
         help="Glob patterns to exclude from sync (repeatable)",
     ),
+    target_dirs: Optional[list[str]] = typer.Option(
+        None,
+        "--dir",
+        help="Export specific additional dir(s) instead of main project (repeatable)",
+    ),
+    all_dirs: bool = typer.Option(
+        False, "--all", help="Export main project and all additional dirs"
+    ),
 ) -> None:
     """
     Export work from container back to host clone.
@@ -700,18 +1039,47 @@ def export(
 
     meta = load_meta(name)
 
-    # Resolve export target
-    if output_dir:
-        export_target = Path(output_dir).resolve()
-        if not export_target.is_dir():
+    # Build list of (container_path, host_target, label) tuples to export
+    export_targets: list[tuple[str, Path, str]] = []
+
+    if all_dirs:
+        main_target = (
+            Path(output_dir).resolve() if output_dir else Path(meta.host_clone_path)
+        )
+        export_targets.append((constants.CONTAINER_PROJECT_DIR, main_target, "project"))
+        for d in meta.additional_dirs:
+            export_targets.append(
+                (d["container_path"], Path(d["host_clone_path"]), d["name"])
+            )
+    elif target_dirs:
+        for td_name in target_dirs:
+            dir_entry = meta.get_additional_dir(td_name)
+            if dir_entry is None:
+                rprint(
+                    f"[bold red]Error: Additional dir '{td_name}' not found.[/bold red]"
+                )
+                raise typer.Exit(1)
+            export_targets.append(
+                (
+                    dir_entry.container_path,
+                    Path(dir_entry.host_clone_path),
+                    dir_entry.name,
+                )
+            )
+    else:
+        main_target = (
+            Path(output_dir).resolve() if output_dir else Path(meta.host_clone_path)
+        )
+        if output_dir and not main_target.is_dir():
             rprint(
-                f"[bold red]Error: Output directory does not exist: {export_target}[/bold red]"
+                f"[bold red]Error: Output directory does not exist: {main_target}[/bold red]"
             )
             raise typer.Exit(1)
-    else:
-        export_target = Path(meta.host_clone_path)
+        export_targets.append((constants.CONTAINER_PROJECT_DIR, main_target, "project"))
 
-    if not yes and not Confirm.ask(f"Export container files to {export_target}?"):
+    if not yes and not Confirm.ask(
+        f"Export {len(export_targets)} target(s) from cage '{name}'?"
+    ):
         rprint("[dim]Cancelled.[/dim]")
         return
 
@@ -721,38 +1089,128 @@ def export(
         container_start(meta.container_name)
         was_stopped = True
 
-    with tempfile.TemporaryDirectory(prefix="trusty-cage-export-") as tmpdir:
-        export_dir = _export_to_tempdir(meta.container_name, Path(tmpdir))
+    for container_path, host_target, label in export_targets:
+        if len(export_targets) > 1:
+            rprint(f"\n[bold blue]Exporting {label}...[/bold blue]")
 
-        rsync_cmd = ["rsync", "-a"]
-        if delete:
-            rsync_cmd.append("--delete")
-        for pat in _collect_exclude_patterns(export_target, protect):
-            rsync_cmd.extend(["--exclude", pat])
-        rsync_cmd.extend(
-            [
-                str(export_dir) + "/",
-                str(export_target) + "/",
-            ]
-        )
+        with tempfile.TemporaryDirectory(prefix="trusty-cage-export-") as tmpdir:
+            export_dir = _export_to_tempdir(
+                meta.container_name, Path(tmpdir), container_path
+            )
 
-        subprocess.run(
-            rsync_cmd,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
+            rsync_cmd = ["rsync", "-a"]
+            if delete:
+                rsync_cmd.append("--delete")
+            for pat in _collect_exclude_patterns(host_target, protect):
+                rsync_cmd.extend(["--exclude", pat])
+            rsync_cmd.extend(
+                [
+                    str(export_dir) + "/",
+                    str(host_target) + "/",
+                ]
+            )
+
+            subprocess.run(
+                rsync_cmd,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+        rprint(f"[bold green]Exported {label} to {host_target}[/bold green]")
 
     if was_stopped:
         container_stop(meta.container_name)
 
-    rprint(f"[bold green]Exported to {export_target}[/bold green]")
-    rprint("[dim]Suggested workflow:[/dim]")
-    rprint(f"  cd {export_target}")
-    rprint("  git diff")
-    rprint("  git add -A && git commit -m 'work from trusty-cage'")
-    if meta.repo_url:
-        rprint("  git push")
+    if not target_dirs and not all_dirs:
+        main_target = export_targets[0][1]
+        rprint("[dim]Suggested workflow:[/dim]")
+        rprint(f"  cd {main_target}")
+        rprint("  git diff")
+        rprint("  git add -A && git commit -m 'work from trusty-cage'")
+        if meta.repo_url:
+            rprint("  git push")
+
+
+def _diff_one(
+    container_name: str,
+    container_path: str,
+    target: Path,
+    label: str,
+    full: bool,
+) -> None:
+    """
+    Show diff for one container directory against its host clone.
+    """
+    with tempfile.TemporaryDirectory(prefix="trusty-cage-diff-") as tmpdir:
+        export_dir = _export_to_tempdir(container_name, Path(tmpdir), container_path)
+
+        rsync_cmd = ["rsync", "-a", "--dry-run", "-i", "--delete"]
+        for pat in _collect_exclude_patterns(target):
+            rsync_cmd.extend(["--exclude", pat])
+        rsync_cmd.extend([str(export_dir) + "/", str(target) + "/"])
+
+        result = subprocess.run(rsync_cmd, capture_output=True, text=True, check=True)
+
+        lines = [ln for ln in result.stdout.splitlines() if ln.strip()]
+
+        if not lines:
+            rprint(f"[dim]No differences ({label}).[/dim]")
+            return
+
+        changes: list[tuple[str, str]] = []
+        for ln in lines:
+            if ln.startswith("*deleting"):
+                filename = ln.split(None, 1)[1].strip()
+                changes.append((filename, "deleted"))
+            elif len(ln) > 12 and ln[0] in (">", "<", "c"):
+                code = ln[:11]
+                filename = ln[12:].strip()
+                if not filename or filename.endswith("/"):
+                    continue
+                if "+" * 4 in code:
+                    changes.append((filename, "added"))
+                else:
+                    changes.append((filename, "modified"))
+
+        if not changes:
+            rprint(f"[dim]No differences ({label}).[/dim]")
+            return
+
+        if full:
+            for filename, status in changes:
+                cage_file = export_dir / filename
+                host_file = target / filename
+                if status == "deleted":
+                    rprint(f"\n[bold red]--- deleted: {filename}[/bold red]")
+                    continue
+                diff_result = subprocess.run(
+                    ["diff", "-u", str(host_file), str(cage_file)],
+                    capture_output=True,
+                    text=True,
+                )
+                if diff_result.stdout:
+                    rprint(f"\n[bold]{filename}[/bold]")
+                    rprint(diff_result.stdout.rstrip())
+                elif status == "added":
+                    rprint(f"\n[bold green]+++ added: {filename}[/bold green]")
+                    rprint(cage_file.read_text().rstrip())
+        else:
+            table = Table(show_header=True, header_style="bold")
+            table.add_column("File")
+            table.add_column("Status")
+            style_map = {
+                "added": "green",
+                "modified": "yellow",
+                "deleted": "red",
+            }
+            for filename, status in changes:
+                table.add_row(
+                    filename,
+                    f"[{style_map[status]}]{status}[/{style_map[status]}]",
+                )
+            rprint(table)
+            rprint(f"[dim]{len(changes)} file(s) changed ({label})[/dim]")
 
 
 @app.command()
@@ -763,6 +1221,14 @@ def diff(
         None,
         "--output-dir",
         help="Compare against this directory instead of the default host clone",
+    ),
+    target_dirs: Optional[list[str]] = typer.Option(
+        None,
+        "--dir",
+        help="Diff specific additional dir(s) instead of main project (repeatable)",
+    ),
+    all_dirs: bool = typer.Option(
+        False, "--all", help="Diff main project and all additional dirs"
     ),
 ) -> None:
     """
@@ -776,15 +1242,44 @@ def diff(
 
     meta = load_meta(name)
 
-    if output_dir:
-        target = Path(output_dir).resolve()
-        if not target.is_dir():
-            rprint(
-                f"[bold red]Error: Directory does not exist: {target}[/bold red]"
+    # Build list of (container_path, host_target, label) tuples
+    diff_targets: list[tuple[str, Path, str]] = []
+
+    if all_dirs:
+        main_target = (
+            Path(output_dir).resolve() if output_dir else Path(meta.host_clone_path)
+        )
+        diff_targets.append((constants.CONTAINER_PROJECT_DIR, main_target, "project"))
+        for d in meta.additional_dirs:
+            diff_targets.append(
+                (d["container_path"], Path(d["host_clone_path"]), d["name"])
             )
-            raise typer.Exit(1)
+    elif target_dirs:
+        for td_name in target_dirs:
+            dir_entry = meta.get_additional_dir(td_name)
+            if dir_entry is None:
+                rprint(
+                    f"[bold red]Error: Additional dir '{td_name}' not found.[/bold red]"
+                )
+                raise typer.Exit(1)
+            diff_targets.append(
+                (
+                    dir_entry.container_path,
+                    Path(dir_entry.host_clone_path),
+                    dir_entry.name,
+                )
+            )
     else:
-        target = Path(meta.host_clone_path)
+        if output_dir:
+            target = Path(output_dir).resolve()
+            if not target.is_dir():
+                rprint(
+                    f"[bold red]Error: Directory does not exist: {target}[/bold red]"
+                )
+                raise typer.Exit(1)
+        else:
+            target = Path(meta.host_clone_path)
+        diff_targets.append((constants.CONTAINER_PROJECT_DIR, target, "project"))
 
     was_stopped = False
     if not container_is_running(meta.container_name):
@@ -792,91 +1287,65 @@ def diff(
         was_stopped = True
 
     try:
-        with tempfile.TemporaryDirectory(prefix="trusty-cage-diff-") as tmpdir:
-            export_dir = _export_to_tempdir(meta.container_name, Path(tmpdir))
-
-            # Use rsync --dry-run -i to preview changes.
-            # Always use --delete in dry-run to show what *would* be removed.
-            rsync_cmd = ["rsync", "-a", "--dry-run", "-i", "--delete"]
-            for pat in _collect_exclude_patterns(target):
-                rsync_cmd.extend(["--exclude", pat])
-            rsync_cmd.extend(
-                [str(export_dir) + "/", str(target) + "/"]
-            )
-
-            result = subprocess.run(
-                rsync_cmd, capture_output=True, text=True, check=True
-            )
-
-            lines = [
-                ln for ln in result.stdout.splitlines() if ln.strip()
-            ]
-
-            if not lines:
-                rprint("[dim]No differences.[/dim]")
-                return
-
-            # Parse rsync itemize output
-            changes: list[tuple[str, str]] = []
-            for ln in lines:
-                if ln.startswith("*deleting"):
-                    filename = ln.split(None, 1)[1].strip()
-                    changes.append((filename, "deleted"))
-                elif len(ln) > 12 and ln[0] in (">", "<", "c"):
-                    code = ln[:11]
-                    filename = ln[12:].strip()
-                    if not filename or filename.endswith("/"):
-                        continue
-                    if "+" * 4 in code:
-                        changes.append((filename, "added"))
-                    else:
-                        changes.append((filename, "modified"))
-
-            if not changes:
-                rprint("[dim]No differences.[/dim]")
-                return
-
-            if full:
-                # Show full unified diffs for added/modified files
-                for filename, status in changes:
-                    cage_file = export_dir / filename
-                    host_file = target / filename
-                    if status == "deleted":
-                        rprint(
-                            f"\n[bold red]--- deleted: {filename}[/bold red]"
-                        )
-                        continue
-                    diff_result = subprocess.run(
-                        ["diff", "-u", str(host_file), str(cage_file)],
-                        capture_output=True,
-                        text=True,
-                    )
-                    if diff_result.stdout:
-                        rprint(f"\n[bold]{filename}[/bold]")
-                        rprint(diff_result.stdout.rstrip())
-                    elif status == "added":
-                        rprint(f"\n[bold green]+++ added: {filename}[/bold green]")
-                        rprint(cage_file.read_text().rstrip())
-            else:
-                # Summary table
-                table = Table(show_header=True, header_style="bold")
-                table.add_column("File")
-                table.add_column("Status")
-                style_map = {
-                    "added": "green",
-                    "modified": "yellow",
-                    "deleted": "red",
-                }
-                for filename, status in changes:
-                    table.add_row(
-                        filename,
-                        f"[{style_map[status]}]{status}[/{style_map[status]}]",
-                    )
-                rprint(table)
-                rprint(f"[dim]{len(changes)} file(s) changed[/dim]")
+        for container_path, host_target, label in diff_targets:
+            if len(diff_targets) > 1:
+                rprint(f"\n[bold blue]Diff: {label}[/bold blue]")
+            _diff_one(meta.container_name, container_path, host_target, label, full)
     finally:
         if was_stopped:
             container_stop(meta.container_name)
+
+
+def _sync_one(
+    meta,
+    source: Path,
+    container_dest: str,
+    label: str,
+    files: list[str] | None = None,
+) -> None:
+    """
+    Sync a single host directory into the container.
+    """
+    with tempfile.TemporaryDirectory(prefix="trusty-cage-sync-") as tmpdir:
+        stage_dir = Path(tmpdir) / "staging"
+
+        if files:
+            for relpath in files:
+                src_file = source / relpath
+                if not src_file.is_file():
+                    rprint(f"[bold red]Error: File not found: {relpath}[/bold red]")
+                    raise typer.Exit(1)
+                dest_file = stage_dir / relpath
+                dest_file.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src_file, dest_file)
+        else:
+            rsync_cmd = ["rsync", "-a"]
+            for pat in _collect_exclude_patterns(source):
+                rsync_cmd.extend(["--exclude", pat])
+            rsync_cmd.extend([str(source) + "/", str(stage_dir) + "/"])
+            subprocess.run(rsync_cmd, check=True, capture_output=True, text=True)
+
+        copy_to_container(
+            str(stage_dir) + "/.",
+            meta.container_name,
+            container_dest,
+        )
+
+        container_exec(
+            meta.container_name,
+            [
+                "chown",
+                "-R",
+                f"{constants.CONTAINER_USER}:{constants.CONTAINER_USER}",
+                container_dest,
+            ],
+            user="root",
+        )
+
+    file_desc = f"{len(files)} file(s)" if files else "all files"
+    rprint(
+        f"[bold green]Synced {file_desc} ({label}) into cage '{meta.name}'[/bold green]"
+    )
 
 
 @app.command()
@@ -886,6 +1355,14 @@ def sync(
         None, "--files", help="Specific files to sync (relative to project root)"
     ),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+    target_dirs: Optional[list[str]] = typer.Option(
+        None,
+        "--dir",
+        help="Sync specific additional dir(s) instead of main project (repeatable)",
+    ),
+    all_dirs: bool = typer.Option(
+        False, "--all", help="Sync main project and all additional dirs"
+    ),
 ) -> None:
     """
     Push host files into a cage environment (inverse of export).
@@ -897,15 +1374,47 @@ def sync(
         raise typer.Exit(1)
 
     meta = load_meta(name)
-    source = Path(meta.host_clone_path)
 
-    if not source.is_dir():
-        rprint(
-            f"[bold red]Error: Host clone not found: {source}[/bold red]"
+    # Build list of (host_source, container_dest, label) tuples
+    sync_targets: list[tuple[Path, str, str]] = []
+
+    if all_dirs:
+        sync_targets.append(
+            (Path(meta.host_clone_path), constants.CONTAINER_PROJECT_DIR, "project")
         )
-        raise typer.Exit(1)
+        for d in meta.additional_dirs:
+            sync_targets.append(
+                (Path(d["host_clone_path"]), d["container_path"], d["name"])
+            )
+    elif target_dirs:
+        for td_name in target_dirs:
+            dir_entry = meta.get_additional_dir(td_name)
+            if dir_entry is None:
+                rprint(
+                    f"[bold red]Error: Additional dir '{td_name}' not found.[/bold red]"
+                )
+                raise typer.Exit(1)
+            sync_targets.append(
+                (
+                    Path(dir_entry.host_clone_path),
+                    dir_entry.container_path,
+                    dir_entry.name,
+                )
+            )
+    else:
+        sync_targets.append(
+            (Path(meta.host_clone_path), constants.CONTAINER_PROJECT_DIR, "project")
+        )
 
-    if not yes and not Confirm.ask(f"Sync host files into cage '{name}'?"):
+    # Validate all sources exist
+    for source, _, label in sync_targets:
+        if not source.is_dir():
+            rprint(f"[bold red]Error: Host clone not found: {source}[/bold red]")
+            raise typer.Exit(1)
+
+    if not yes and not Confirm.ask(
+        f"Sync {len(sync_targets)} target(s) into cage '{name}'?"
+    ):
         rprint("[dim]Cancelled.[/dim]")
         return
 
@@ -915,54 +1424,12 @@ def sync(
         was_stopped = True
 
     try:
-        with tempfile.TemporaryDirectory(prefix="trusty-cage-sync-") as tmpdir:
-            stage_dir = Path(tmpdir) / "project"
-
-            if files:
-                # Copy only the specified files, preserving directory structure
-                for relpath in files:
-                    src_file = source / relpath
-                    if not src_file.is_file():
-                        rprint(
-                            f"[bold red]Error: File not found: {relpath}[/bold red]"
-                        )
-                        raise typer.Exit(1)
-                    dest_file = stage_dir / relpath
-                    dest_file.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(src_file, dest_file)
-            else:
-                # rsync the full project with excludes
-                rsync_cmd = ["rsync", "-a"]
-                for pat in _collect_exclude_patterns(source):
-                    rsync_cmd.extend(["--exclude", pat])
-                rsync_cmd.extend(
-                    [str(source) + "/", str(stage_dir) + "/"]
-                )
-                subprocess.run(
-                    rsync_cmd, check=True, capture_output=True, text=True
-                )
-
-            # docker cp staged files into container
-            copy_to_container(
-                str(stage_dir) + "/.",
-                meta.container_name,
-                constants.CONTAINER_PROJECT_DIR,
-            )
-
-            # Fix ownership
-            container_exec(
-                meta.container_name,
-                [
-                    "chown",
-                    "-R",
-                    f"{constants.CONTAINER_USER}:{constants.CONTAINER_USER}",
-                    constants.CONTAINER_PROJECT_DIR,
-                ],
-                user="root",
-            )
-
-        file_desc = f"{len(files)} file(s)" if files else "all files"
-        rprint(f"[bold green]Synced {file_desc} into cage '{name}'[/bold green]")
+        for source, container_dest, label in sync_targets:
+            if len(sync_targets) > 1:
+                rprint(f"\n[bold blue]Syncing {label}...[/bold blue]")
+            # --files only applies to main project (first target without --dir/--all)
+            sync_files = files if (not target_dirs and not all_dirs) else None
+            _sync_one(meta, source, container_dest, label, sync_files)
     finally:
         if was_stopped:
             container_stop(meta.container_name)
@@ -995,10 +1462,21 @@ def destroy(
         container_remove(meta.container_name, force=True)
         rprint(f"[dim]Removed container {meta.container_name}[/dim]")
 
-    # Remove volume
+    # Remove main volume
     if volume_exists(meta.volume_name):
         volume_remove(meta.volume_name)
         rprint(f"[dim]Removed volume {meta.volume_name}[/dim]")
+
+    # Remove additional dir volumes
+    for d in meta.additional_dirs:
+        if volume_exists(d["volume_name"]):
+            volume_remove(d["volume_name"])
+            rprint(f"[dim]Removed volume {d['volume_name']}[/dim]")
+
+    # Remove dirs/ directory
+    dirs_path = get_env_dir(name) / "dirs"
+    if dirs_path.exists():
+        shutil.rmtree(dirs_path)
 
     # Delete meta.json (keep repo/)
     meta_path = get_env_dir(name) / "meta.json"
@@ -1176,9 +1654,7 @@ def launch(
 
     if inject_messaging and prompt_text:
         assets = importlib.resources.files("trusty_cage.assets")
-        messaging_text = (
-            assets.joinpath("messaging-instructions.md").read_text()
-        )
+        messaging_text = assets.joinpath("messaging-instructions.md").read_text()
         prompt_text = prompt_text + "\n\n" + messaging_text
 
     stream_log = f"{constants.CAGE_MSG_DIR}/claude-stream.log"

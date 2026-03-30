@@ -7,12 +7,33 @@ file as the single source of truth.
 
 import json
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
 from trusty_cage import constants
+
+
+@dataclass
+class AdditionalDir:
+    """
+    Metadata for an additional directory shipped into a cage.
+    """
+
+    name: str
+    host_source_path: str
+    host_clone_path: str
+    volume_name: str
+    container_path: str
+    added_at: str
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "AdditionalDir":
+        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
 
 
 @dataclass
@@ -29,6 +50,7 @@ class MetaJson:
     host_clone_path: str
     auth_mode: str
     api_key_env: str = "ANTHROPIC_API_KEY"
+    additional_dirs: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -36,6 +58,15 @@ class MetaJson:
     @classmethod
     def from_dict(cls, data: dict) -> "MetaJson":
         return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+
+    def get_additional_dir(self, name: str) -> AdditionalDir | None:
+        """
+        Look up an additional dir by name. Returns None if not found.
+        """
+        for d in self.additional_dirs:
+            if d.get("name") == name:
+                return AdditionalDir.from_dict(d)
+        return None
 
 
 def derive_name(url: str) -> str:

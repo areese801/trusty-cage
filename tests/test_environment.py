@@ -5,6 +5,7 @@ Tests for environment module.
 import json
 
 from trusty_cage.environment import (
+    AdditionalDir,
     MetaJson,
     create_meta,
     derive_name,
@@ -13,6 +14,7 @@ from trusty_cage.environment import (
     get_env_dir,
     list_envs,
     load_meta,
+    save_meta,
 )
 
 
@@ -142,6 +144,95 @@ class TestListEnvs:
         envs = list_envs()
         assert len(envs) == 1
         assert envs[0].name == "good"
+
+
+class TestAdditionalDir:
+    def test_to_dict_roundtrip(self):
+        d = AdditionalDir(
+            name="shared-lib",
+            host_source_path="/Users/areese/projects/shared-lib",
+            host_clone_path="/Users/areese/.trusty-cage/envs/my-cage/dirs/shared-lib",
+            volume_name="isolated-dev-my-cage-shared-lib",
+            container_path="/home/trustycage/shared-lib",
+            added_at="2026-03-30T12:00:00+00:00",
+        )
+        data = d.to_dict()
+        restored = AdditionalDir.from_dict(data)
+        assert restored.name == "shared-lib"
+        assert restored.volume_name == "isolated-dev-my-cage-shared-lib"
+        assert restored.container_path == "/home/trustycage/shared-lib"
+
+    def test_from_dict_ignores_extra_keys(self):
+        data = {
+            "name": "lib",
+            "host_source_path": "/tmp/lib",
+            "host_clone_path": "/tmp/clone",
+            "volume_name": "vol",
+            "container_path": "/home/trustycage/lib",
+            "added_at": "now",
+            "extra": "ignored",
+        }
+        d = AdditionalDir.from_dict(data)
+        assert d.name == "lib"
+
+
+class TestMetaJsonWithAdditionalDirs:
+    def test_meta_with_additional_dirs_roundtrip(self, mock_trusty_cage_dir):
+        meta = create_meta(
+            name="test-env",
+            repo_url="https://github.com/user/repo",
+            auth_mode="api_key",
+        )
+        dir_entry = AdditionalDir(
+            name="shared-lib",
+            host_source_path="/tmp/shared-lib",
+            host_clone_path=str(get_env_dir("test-env") / "dirs" / "shared-lib"),
+            volume_name="isolated-dev-test-env-shared-lib",
+            container_path="/home/trustycage/shared-lib",
+            added_at="2026-03-30T12:00:00+00:00",
+        )
+        meta.additional_dirs = [dir_entry.to_dict()]
+        save_meta(meta)
+
+        loaded = load_meta("test-env")
+        assert len(loaded.additional_dirs) == 1
+        assert loaded.additional_dirs[0]["name"] == "shared-lib"
+
+    def test_meta_without_additional_dirs_defaults_empty(self, mock_trusty_cage_dir):
+        create_meta(
+            name="test-env",
+            repo_url="https://github.com/user/repo",
+            auth_mode="api_key",
+        )
+        loaded = load_meta("test-env")
+        assert loaded.additional_dirs == []
+
+    def test_get_additional_dir_by_name(self, mock_trusty_cage_dir):
+        meta = create_meta(
+            name="test-env",
+            repo_url="https://github.com/user/repo",
+            auth_mode="api_key",
+        )
+        dir_entry = AdditionalDir(
+            name="frontend",
+            host_source_path="/tmp/frontend",
+            host_clone_path=str(get_env_dir("test-env") / "dirs" / "frontend"),
+            volume_name="isolated-dev-test-env-frontend",
+            container_path="/home/trustycage/frontend",
+            added_at="2026-03-30T12:00:00+00:00",
+        )
+        meta.additional_dirs = [dir_entry.to_dict()]
+        result = meta.get_additional_dir("frontend")
+        assert result is not None
+        assert result.name == "frontend"
+
+    def test_get_additional_dir_returns_none_for_missing(self, mock_trusty_cage_dir):
+        meta = create_meta(
+            name="test-env",
+            repo_url="https://github.com/user/repo",
+            auth_mode="api_key",
+        )
+        assert meta.get_additional_dir("nonexistent") is None
 
 
 class TestMetaJson:
