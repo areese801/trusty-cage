@@ -49,15 +49,18 @@ The CLI is available as `trusty-cage` or the short alias `tc`.
 | Command | Purpose |
 |---|---|
 | `init [--force]` | Create config directory and default `.env` file |
-| `create <git-repo-url> [--name] [--no-attach] [--auth-mode] [--dockerfile]` | Clone repo, build image, create container+volume, copy files in, init local git, apply dotfiles, attach |
+| `create <git-repo-url> [--name] [--no-attach] [--auth-mode] [--dockerfile] [--add-dir]` | Clone repo, build image, create container+volume, copy files in, init local git, apply dotfiles, attach |
+| `create --dir <path> [--name] [--no-attach] [--auth-mode] [--dockerfile] [--add-dir]` | Same as above but copies from a local directory instead of cloning a URL |
 | `attach <name>` | Start container if stopped, apply iptables, create/attach tmux session |
 | `stop <name>` | Stop container (preserves volume) |
-| `list [--json]` | Show all environments with status, date, repo URL |
+| `list [--json]` | Show all environments with status, date, repo URL, additional dirs |
 | `exists <name>` | Check if an environment exists (exit code 0/1) |
-| `export <name> [--output-dir] [--delete] [--protect]` | Copy container files → host clone via rsync (no `--delete` by default; respects `.gitignore` + `.cageprotect`) |
-| `diff <name> [--full] [--output-dir]` | Preview what `tc export` would change (dry-run rsync comparison) |
-| `sync <name> [--files] [--yes]` | Push host files into cage (inverse of export; excludes `.git/` + `.cageprotect` patterns) |
-| `destroy <name>` | Remove container + volume (keeps host clone) |
+| `add-dir <name> <path> [--name]` | Add a local directory to an existing cage (recreates container with new volume mount) |
+| `remove-dir <name> <dir-name> [--yes]` | Remove an additional directory from a cage (removes volume and host clone) |
+| `export <name> [--output-dir] [--delete] [--protect] [--dir] [--all]` | Copy container files → host clone via rsync (`--dir` for specific additional dirs, `--all` for everything) |
+| `diff <name> [--full] [--output-dir] [--dir] [--all]` | Preview what `tc export` would change (dry-run rsync comparison; supports `--dir`/`--all`) |
+| `sync <name> [--files] [--yes] [--dir] [--all]` | Push host files into cage (inverse of export; supports `--dir`/`--all`) |
+| `destroy <name>` | Remove container + all volumes including additional dirs (keeps host clone) |
 | `rebuild-image [--dockerfile]` | Force rebuild Docker image |
 | `auth <name> [--login]` | Refresh/verify credentials; `--login` opens interactive Claude for `/login` |
 | `launch <name> --prompt\|--prompt-file\|--test [--background] [--no-inject-messaging]` | Launch Claude inside a cage with proper auth handling (messaging instructions injected by default) |
@@ -70,8 +73,9 @@ The CLI is available as `trusty-cage` or the short alias `tc`.
   .env                 # User config (created by `trusty-cage init`)
   image.sha            # SHA of Dockerfile for rebuild detection
   envs/<name>/
-    meta.json          # Source of truth: repo_url, created_at, volume_name, host_clone_path, auth_mode
+    meta.json          # Source of truth: repo_url, created_at, volume_name, host_clone_path, auth_mode, additional_dirs
     repo/              # Full host clone with remotes (for export)
+    dirs/<dir-name>/   # Host clones for additional directories (for export/sync)
 ```
 
 ### Container Setup
@@ -103,6 +107,20 @@ Chosen at `create` time, stored in `meta.json`:
 ### Imports
 - All imports must be at the top of the file — no inline or lazy imports inside functions
 - This applies to all Python files in the project
+
+## Testing Workflow
+
+Before committing, always:
+
+1. **Run pytest** — all unit tests must pass (`pytest` or `pytest -v`)
+2. **Install in dev mode** — `pip install -e .` to pick up changes
+3. **Test from the terminal** — run `tc` commands manually to verify:
+   - CLI help renders correctly for changed commands (`tc <cmd> --help`)
+   - Error paths return exit code 1 with clear messages
+   - Happy paths work end-to-end with a real Docker container (create, diff, export, sync, destroy)
+   - Regression: existing functionality still works alongside new features
+
+Terminal testing catches issues that unit tests with mocked Docker calls miss (argument parsing edge cases, rsync behavior, file permission issues).
 
 ## Git Workflow
 

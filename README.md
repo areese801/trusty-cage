@@ -129,21 +129,78 @@ trusty-cage export hello-world
 trusty-cage destroy hello-world
 ```
 
+## Example: Local Directory
+
+No remote repo? Use `--dir` to create a cage from any local directory:
+
+```bash
+# Create from current directory
+trusty-cage create --dir . --name my-project --no-attach
+
+# Or from an explicit path
+trusty-cage create --dir ~/projects/my-project --no-attach
+
+# Everything else works the same
+trusty-cage attach my-project
+trusty-cage export my-project
+trusty-cage destroy my-project
+```
+
+## Additional Directories
+
+Ship extra local directories into a cage alongside the main project. Each additional directory gets its own Docker volume and host clone, with full export/sync/diff support.
+
+```bash
+# Include at create time
+tc create --dir ~/projects/main-app --add-dir ~/projects/shared-lib --name my-cage --no-attach
+
+# Or add to an existing cage (recreates the container with a new volume mount)
+tc add-dir my-cage ~/projects/shared-lib
+
+# Additional dirs appear in the container's home directory
+# /home/trustycage/project       ← main project (always)
+# /home/trustycage/shared-lib    ← additional dir
+
+# Export, diff, and sync work with --dir and --all
+tc diff my-cage --dir shared-lib           # diff one additional dir
+tc diff my-cage --all                      # diff main project + all additional dirs
+tc export my-cage --dir shared-lib -y      # export one additional dir
+tc export my-cage --all -y                 # export everything
+tc sync my-cage --dir shared-lib -y        # push host changes into one dir
+
+# Remove a directory (removes volume and host clone)
+tc remove-dir my-cage shared-lib -y
+
+# Destroy cleans up all volumes (main + additional dirs)
+tc destroy my-cage -y
+```
+
+Directory names are derived from the path basename (lowercased, sanitized). Override with `--name`:
+
+```bash
+tc add-dir my-cage ~/projects/My.Library --name mylib
+```
+
+The name `project` is reserved for the main project directory.
+
 ## Commands
 
 | Command | Description |
 |---|---|
 | `trusty-cage --version` | Show version and exit |
 | `trusty-cage init [--force]` | Create config directory and default `.env` file |
-| `trusty-cage create <url> [--name] [--no-attach] [--auth-mode] [--dockerfile]` | Create a new environment from a git repo |
+| `trusty-cage create <url> [--name] [--no-attach] [--auth-mode] [--dockerfile] [--add-dir]` | Create a new environment from a git repo |
+| `trusty-cage create --dir <path> [--name] [--no-attach] [--auth-mode] [--dockerfile] [--add-dir]` | Create from a local directory (no remote required) |
 | `trusty-cage attach <name>` | Attach to an existing environment |
 | `trusty-cage stop <name>` | Stop a container (preserves work) |
-| `trusty-cage list [--json]` | List all environments with status |
+| `trusty-cage list [--json]` | List all environments with status and additional dirs |
 | `trusty-cage exists <name>` | Check if an environment exists (exit code 0/1) |
-| `trusty-cage export <name> [-y/--yes] [--output-dir] [--delete] [--protect]` | Copy work back to host clone (safe default: no `--delete`) |
-| `trusty-cage diff <name> [--full] [--output-dir]` | Preview what `export` would change (dry run) |
-| `trusty-cage sync <name> [--files] [-y/--yes]` | Push host files into a cage (inverse of export) |
-| `trusty-cage destroy <name> [-y/--yes]` | Remove container and volume (keeps host clone) |
+| `trusty-cage add-dir <name> <path> [--name]` | Add a local directory to an existing cage |
+| `trusty-cage remove-dir <name> <dir-name> [-y/--yes]` | Remove an additional directory from a cage |
+| `trusty-cage export <name> [-y/--yes] [--output-dir] [--delete] [--protect] [--dir] [--all]` | Copy work back to host clone (safe default: no `--delete`) |
+| `trusty-cage diff <name> [--full] [--output-dir] [--dir] [--all]` | Preview what `export` would change (dry run) |
+| `trusty-cage sync <name> [--files] [-y/--yes] [--dir] [--all]` | Push host files into a cage (inverse of export) |
+| `trusty-cage destroy <name> [-y/--yes]` | Remove container, all volumes, and additional dirs (keeps host clone) |
 | `trusty-cage rebuild-image [--dockerfile]` | Force rebuild the Docker image |
 | `trusty-cage auth <name> [--login]` | Refresh or verify credentials for an environment |
 | `trusty-cage launch <name> -p/--prompt\|--prompt-file\|--test [--background] [--no-inject-messaging]` | Launch Claude Code inside a cage (messaging instructions injected by default) |
@@ -161,6 +218,8 @@ By default, `tc export` copies cage files onto the host **without** deleting hos
 tc export myenv -y                     # safe: adds/updates files, never deletes
 tc export myenv -y --delete            # opt-in: mirror cage exactly (deletes host-only files)
 tc export myenv -y --protect "*.md"    # exclude additional patterns from sync
+tc export myenv -y --dir shared-lib    # export a specific additional dir
+tc export myenv -y --all               # export main project + all additional dirs
 ```
 
 Files matching `.gitignore` and `.cageprotect` patterns are always excluded from both overwrite and deletion, even with `--delete`.
@@ -184,6 +243,8 @@ See what `tc export` would change before running it:
 tc diff myenv                          # summary table (added/modified/deleted)
 tc diff myenv --full                   # full unified diffs
 tc diff myenv --output-dir .           # compare against a specific directory
+tc diff myenv --dir shared-lib         # diff a specific additional dir
+tc diff myenv --all                    # diff main project + all additional dirs
 ```
 
 ### Push fixes with `tc sync`
@@ -193,6 +254,8 @@ After exporting and fixing something on the host, push changes back into a runni
 ```bash
 tc sync myenv -y                       # sync all host files into cage
 tc sync myenv -y --files "main.py"     # sync specific files only
+tc sync myenv -y --dir shared-lib      # sync a specific additional dir
+tc sync myenv -y --all                 # sync main project + all additional dirs
 ```
 
 ### Typical workflow

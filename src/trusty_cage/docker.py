@@ -106,7 +106,7 @@ def container_remove(name: str, force: bool = False) -> None:
 def container_create(
     name: str,
     image: str,
-    volume_mount: str | None = None,
+    volume_mounts: list[str] | None = None,
     hostname: str | None = None,
     cap_add: list[str] | None = None,
 ) -> None:
@@ -114,8 +114,8 @@ def container_create(
     Create (but don't start) a container.
     """
     args = ["create", "--name", name]
-    if volume_mount:
-        args.extend(["-v", volume_mount])
+    for mount in volume_mounts or []:
+        args.extend(["-v", mount])
     if hostname:
         args.extend(["--hostname", hostname])
     if cap_add:
@@ -123,6 +123,33 @@ def container_create(
             args.extend(["--cap-add", cap])
     args.append(image)
     _run(args)
+
+
+def container_recreate(
+    name: str,
+    image: str,
+    volume_mounts: list[str] | None = None,
+    hostname: str | None = None,
+    cap_add: list[str] | None = None,
+) -> None:
+    """
+    Recreate a container with new volume mounts.
+
+    Stops and removes the existing container, then creates and starts
+    a new one with the same name. Existing volumes are preserved.
+    The container is always left running after recreation.
+    """
+    if container_is_running(name):
+        container_stop(name)
+    container_remove(name)
+    container_create(
+        name=name,
+        image=image,
+        volume_mounts=volume_mounts,
+        hostname=hostname,
+        cap_add=cap_add,
+    )
+    container_start(name)
 
 
 def container_exec(

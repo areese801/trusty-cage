@@ -10,6 +10,14 @@ from typer.testing import CliRunner
 
 from trusty_cage import __version__
 from trusty_cage.cli import app
+from trusty_cage.environment import (
+    AdditionalDir,
+    MetaJson,
+    create_meta,
+    get_env_dir,
+    load_meta,
+    save_meta,
+)
 from trusty_cage.messaging import Message
 
 runner = CliRunner()
@@ -139,6 +147,137 @@ class TestCreateCommand:
         )
         assert result.exit_code == 0
         assert "created successfully" in result.output
+
+
+class TestCreateFromDir:
+    """Tests for tc create --dir."""
+
+    def _mock_create_deps(self, mocker, mock_trusty_cage_dir):
+        """Mock all external dependencies for create --dir tests."""
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.build_if_needed")
+        mocker.patch(f"{CLI}.volume_create")
+        mocker.patch(f"{CLI}.container_create")
+        mocker.patch(f"{CLI}.container_start")
+        mocker.patch(f"{CLI}.copy_to_container")
+        mocker.patch(f"{CLI}.container_exec")
+        mocker.patch(f"{CLI}.init_messaging_dirs")
+
+        def fake_rsync(*args, **kwargs):
+            """Simulate rsync by creating dest dir with a marker file."""
+            cmd = args[0] if args else kwargs.get("args", [])
+            # rsync dest is the last arg (ends with /)
+            dest = cmd[-1].rstrip("/")
+            from pathlib import Path
+
+            Path(dest).mkdir(parents=True, exist_ok=True)
+            (Path(dest) / "README.md").write_text("# copied")
+            return subprocess.CompletedProcess(cmd, 0)
+
+        mocker.patch(f"{CLI}.subprocess.run", side_effect=fake_rsync)
+
+    def test_create_with_dir_flag(self, mocker, mock_trusty_cage_dir, tmp_path):
+        self._mock_create_deps(mocker, mock_trusty_cage_dir)
+        source = tmp_path / "myproject"
+        source.mkdir()
+        (source / "main.py").write_text("print('hello')")
+
+        result = runner.invoke(
+            app,
+            ["create", "--dir", str(source), "--no-attach", "--auth-mode", "api_key"],
+        )
+        assert result.exit_code == 0
+        assert "created successfully" in result.output
+
+    def test_create_dir_derives_name(self, mocker, mock_trusty_cage_dir, tmp_path):
+        self._mock_create_deps(mocker, mock_trusty_cage_dir)
+        source = tmp_path / "My-Cool-Project"
+        source.mkdir()
+        (source / "README.md").write_text("# hello")
+
+        result = runner.invoke(
+            app,
+            ["create", "--dir", str(source), "--no-attach", "--auth-mode", "api_key"],
+        )
+        assert result.exit_code == 0
+        assert "my-cool-project" in result.output
+
+    def test_create_dir_with_explicit_name(
+        self, mocker, mock_trusty_cage_dir, tmp_path
+    ):
+        self._mock_create_deps(mocker, mock_trusty_cage_dir)
+        source = tmp_path / "myproject"
+        source.mkdir()
+        (source / "main.py").write_text("print('hello')")
+
+        result = runner.invoke(
+            app,
+            [
+                "create",
+                "--dir",
+                str(source),
+                "--name",
+                "custom-name",
+                "--no-attach",
+                "--auth-mode",
+                "api_key",
+            ],
+        )
+        assert result.exit_code == 0
+        assert "custom-name" in result.output
+
+    def test_create_dir_and_url_both_errors(
+        self, mocker, mock_trusty_cage_dir, tmp_path
+    ):
+        source = tmp_path / "myproject"
+        source.mkdir()
+
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        result = runner.invoke(
+            app,
+            [
+                "create",
+                "https://github.com/user/repo",
+                "--dir",
+                str(source),
+                "--no-attach",
+            ],
+        )
+        assert result.exit_code != 0
+        assert "not both" in result.output
+
+    def test_create_neither_dir_nor_url_errors(self, mocker, mock_trusty_cage_dir):
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        result = runner.invoke(app, ["create", "--no-attach"])
+        assert result.exit_code != 0
+        assert "Provide a git repo URL or --dir" in result.output
+
+    def test_create_dir_nonexistent_errors(self, mocker, mock_trusty_cage_dir):
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        result = runner.invoke(
+            app, ["create", "--dir", "/tmp/does-not-exist-xyz", "--no-attach"]
+        )
+        assert result.exit_code != 0
+        assert "does not exist" in result.output
+
+    def test_create_dir_meta_has_empty_repo_url(
+        self, mocker, mock_trusty_cage_dir, tmp_path
+    ):
+        self._mock_create_deps(mocker, mock_trusty_cage_dir)
+        source = tmp_path / "myproject"
+        source.mkdir()
+        (source / "main.py").write_text("print('hello')")
+
+        result = runner.invoke(
+            app,
+            ["create", "--dir", str(source), "--no-attach", "--auth-mode", "api_key"],
+        )
+        assert result.exit_code == 0
+
+        from trusty_cage.environment import load_meta
+
+        meta = load_meta("myproject")
+        assert meta.repo_url == ""
 
 
 class TestStopCommand:
@@ -328,6 +467,7 @@ class TestListJsonFlag:
                 "repo_url",
                 "created_at",
                 "auth_mode",
+                "additional_dirs",
             }
             assert entry["status"] == "running"
 
@@ -387,7 +527,9 @@ class TestExportOutputDir:
 
 
 class TestExportGitignoreExcludes:
-    def test_no_gitignore_only_excludes_git(self, mocker, mock_trusty_cage_dir, tmp_path):
+    def test_no_gitignore_only_excludes_git(
+        self, mocker, mock_trusty_cage_dir, tmp_path
+    ):
         """
         Without a .gitignore, rsync should only exclude .git/.
         """
@@ -448,7 +590,14 @@ class TestExportGitignoreExcludes:
             for i in range(len(rsync_cmd))
             if rsync_cmd[i] == "--exclude"
         ]
-        assert exclude_args == [".git/", ".gitignore", ".cageprotect", "venv/", ".env", "__pycache__/"]
+        assert exclude_args == [
+            ".git/",
+            ".gitignore",
+            ".cageprotect",
+            "venv/",
+            ".env",
+            "__pycache__/",
+        ]
 
     def test_gitignore_skips_comments_and_blanks(
         self, mocker, mock_trusty_cage_dir, tmp_path
@@ -891,9 +1040,7 @@ class TestDiffCommand:
         mocker.patch(f"{CLI}.copy_from_container")
 
         rsync_output = (
-            ">f+++++++++ new_file.py\n"
-            ">f.st...... changed.py\n"
-            "*deleting   old_file.py\n"
+            ">f+++++++++ new_file.py\n>f.st...... changed.py\n*deleting   old_file.py\n"
         )
         mocker.patch(
             f"{CLI}.subprocess.run",
@@ -963,9 +1110,7 @@ class TestDiffCommand:
             ),
         )
 
-        result = runner.invoke(
-            app, ["diff", "myenv", "--output-dir", str(output_dir)]
-        )
+        result = runner.invoke(app, ["diff", "myenv", "--output-dir", str(output_dir)])
         assert result.exit_code == 0
 
         rsync_cmd = mock_rsync.call_args[0][0]
@@ -1025,9 +1170,7 @@ class TestSyncCommand:
         mocker.patch(f"{CLI}.copy_to_container")
         mocker.patch(f"{CLI}.container_exec")
 
-        result = runner.invoke(
-            app, ["sync", "myenv", "--yes", "--files", "main.py"]
-        )
+        result = runner.invoke(app, ["sync", "myenv", "--yes", "--files", "main.py"])
         assert result.exit_code == 0
         assert "1 file(s)" in result.output
 
@@ -1085,9 +1228,7 @@ class TestLaunchInjectMessaging:
     def test_inject_messaging_default(self, mocker, mock_trusty_cage_dir):
         from trusty_cage.environment import create_meta
 
-        create_meta(
-            name="myenv", repo_url="https://a.com/r", auth_mode="subscription"
-        )
+        create_meta(name="myenv", repo_url="https://a.com/r", auth_mode="subscription")
         mocker.patch(f"{CLI}.is_docker_running", return_value=True)
         mocker.patch(f"{CLI}.container_is_running", return_value=True)
         mock_exec = mocker.patch(
@@ -1108,9 +1249,7 @@ class TestLaunchInjectMessaging:
     def test_no_inject_messaging(self, mocker, mock_trusty_cage_dir):
         from trusty_cage.environment import create_meta
 
-        create_meta(
-            name="myenv", repo_url="https://a.com/r", auth_mode="subscription"
-        )
+        create_meta(name="myenv", repo_url="https://a.com/r", auth_mode="subscription")
         mocker.patch(f"{CLI}.is_docker_running", return_value=True)
         mocker.patch(f"{CLI}.container_is_running", return_value=True)
         mock_exec = mocker.patch(
@@ -1133,9 +1272,7 @@ class TestLaunchInjectMessaging:
     def test_inject_messaging_not_in_test_mode(self, mocker, mock_trusty_cage_dir):
         from trusty_cage.environment import create_meta
 
-        create_meta(
-            name="myenv", repo_url="https://a.com/r", auth_mode="subscription"
-        )
+        create_meta(name="myenv", repo_url="https://a.com/r", auth_mode="subscription")
         mocker.patch(f"{CLI}.is_docker_running", return_value=True)
         mocker.patch(f"{CLI}.container_is_running", return_value=True)
         mock_exec = mocker.patch(
@@ -1149,3 +1286,411 @@ class TestLaunchInjectMessaging:
         assert result.exit_code == 0
         cmd = mock_exec.call_args[0][1]
         assert cmd == ["claude", "--version"]
+
+
+class TestDestroyWithAdditionalDirs:
+    def test_destroy_removes_additional_volumes(self, mocker, mock_trusty_cage_dir):
+        meta = create_meta(name="my-cage", repo_url="", auth_mode="api_key")
+        dirs_path = get_env_dir("my-cage") / "dirs" / "shared-lib"
+        dirs_path.mkdir(parents=True)
+        meta.additional_dirs = [
+            {
+                "name": "shared-lib",
+                "host_source_path": "/tmp/lib",
+                "host_clone_path": str(dirs_path),
+                "volume_name": "isolated-dev-my-cage-shared-lib",
+                "container_path": "/home/trustycage/shared-lib",
+                "added_at": "now",
+            }
+        ]
+        save_meta(meta)
+
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_exists", return_value=True)
+        mocker.patch(f"{CLI}.container_remove")
+        mocker.patch(f"{CLI}.volume_exists", return_value=True)
+        mock_vol_remove = mocker.patch(f"{CLI}.volume_remove")
+
+        result = runner.invoke(app, ["destroy", "my-cage", "--yes"])
+        assert result.exit_code == 0
+
+        vol_remove_calls = [call.args[0] for call in mock_vol_remove.call_args_list]
+        assert "isolated-dev-my-cage" in vol_remove_calls
+        assert "isolated-dev-my-cage-shared-lib" in vol_remove_calls
+
+        assert not dirs_path.exists()
+
+
+class TestListWithAdditionalDirs:
+    def test_list_json_includes_additional_dirs(self, mocker, mock_trusty_cage_dir):
+        meta = create_meta(name="my-cage", repo_url="", auth_mode="api_key")
+        meta.additional_dirs = [
+            {
+                "name": "shared-lib",
+                "host_source_path": "/tmp/lib",
+                "host_clone_path": "/tmp/clone",
+                "volume_name": "vol",
+                "container_path": "/home/trustycage/shared-lib",
+                "added_at": "now",
+            }
+        ]
+        save_meta(meta)
+
+        mocker.patch(f"{CLI}.container_exists", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=False)
+
+        result = runner.invoke(app, ["list", "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert len(data) == 1
+        assert data[0]["additional_dirs"] == ["shared-lib"]
+
+
+class TestDiffWithDir:
+    def test_diff_dir_not_found(self, mocker, mock_trusty_cage_dir):
+        meta = create_meta(name="my-cage", repo_url="", auth_mode="api_key")
+        save_meta(meta)
+
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+
+        result = runner.invoke(app, ["diff", "my-cage", "--dir", "nonexistent"])
+        assert result.exit_code != 0
+        assert "not found" in result.output.lower()
+
+    def test_diff_with_dir_flag(self, mocker, mock_trusty_cage_dir, tmp_path):
+        host_clone = tmp_path / "dirs" / "shared-lib"
+        host_clone.mkdir(parents=True)
+
+        meta = create_meta(name="my-cage", repo_url="", auth_mode="api_key")
+        meta.additional_dirs = [
+            {
+                "name": "shared-lib",
+                "host_source_path": "/tmp/shared-lib",
+                "host_clone_path": str(host_clone),
+                "volume_name": "isolated-dev-my-cage-shared-lib",
+                "container_path": "/home/trustycage/shared-lib",
+                "added_at": "now",
+            }
+        ]
+        save_meta(meta)
+
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+        mocker.patch(f"{CLI}.copy_from_container")
+        mocker.patch(
+            f"{CLI}.subprocess.run",
+            return_value=subprocess.CompletedProcess([], 0, stdout="", stderr=""),
+        )
+
+        result = runner.invoke(app, ["diff", "my-cage", "--dir", "shared-lib"])
+        assert result.exit_code == 0
+
+
+class TestSyncWithDir:
+    def test_sync_dir_flag(self, mocker, mock_trusty_cage_dir, tmp_path):
+        host_clone = tmp_path / "dirs" / "shared-lib"
+        host_clone.mkdir(parents=True)
+        (host_clone / "lib.py").write_text("# updated lib")
+
+        meta = create_meta(name="my-cage", repo_url="", auth_mode="api_key")
+        meta.additional_dirs = [
+            {
+                "name": "shared-lib",
+                "host_source_path": "/tmp/shared-lib",
+                "host_clone_path": str(host_clone),
+                "volume_name": "isolated-dev-my-cage-shared-lib",
+                "container_path": "/home/trustycage/shared-lib",
+                "added_at": "now",
+            }
+        ]
+        save_meta(meta)
+
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+        mocker.patch(f"{CLI}.copy_to_container")
+        mocker.patch(f"{CLI}.container_exec")
+        mocker.patch(
+            f"{CLI}.subprocess.run",
+            return_value=subprocess.CompletedProcess([], 0, stdout="", stderr=""),
+        )
+
+        result = runner.invoke(app, ["sync", "my-cage", "--dir", "shared-lib", "--yes"])
+        assert result.exit_code == 0
+        assert "shared-lib" in result.output
+
+    def test_sync_dir_not_found(self, mocker, mock_trusty_cage_dir):
+        meta = create_meta(name="my-cage", repo_url="", auth_mode="api_key")
+        save_meta(meta)
+
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+
+        result = runner.invoke(
+            app, ["sync", "my-cage", "--dir", "nonexistent", "--yes"]
+        )
+        assert result.exit_code != 0
+        assert "not found" in result.output.lower()
+
+
+class TestExportWithDir:
+    def test_export_dir_not_found(self, mocker, mock_trusty_cage_dir):
+        meta = create_meta(name="my-cage", repo_url="", auth_mode="api_key")
+        save_meta(meta)
+
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+
+        result = runner.invoke(
+            app, ["export", "my-cage", "--dir", "nonexistent", "--yes"]
+        )
+        assert result.exit_code != 0
+        assert "not found" in result.output.lower()
+
+    def test_export_with_dir_flag(self, mocker, mock_trusty_cage_dir, tmp_path):
+        host_clone = tmp_path / "dirs" / "shared-lib"
+        host_clone.mkdir(parents=True)
+
+        meta = create_meta(name="my-cage", repo_url="", auth_mode="api_key")
+        meta.additional_dirs = [
+            {
+                "name": "shared-lib",
+                "host_source_path": "/tmp/shared-lib",
+                "host_clone_path": str(host_clone),
+                "volume_name": "isolated-dev-my-cage-shared-lib",
+                "container_path": "/home/trustycage/shared-lib",
+                "added_at": "now",
+            }
+        ]
+        save_meta(meta)
+
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+        mocker.patch(f"{CLI}.copy_from_container")
+        mocker.patch(
+            f"{CLI}.subprocess.run",
+            return_value=subprocess.CompletedProcess([], 0, stdout="", stderr=""),
+        )
+
+        result = runner.invoke(
+            app, ["export", "my-cage", "--dir", "shared-lib", "--yes"]
+        )
+        assert result.exit_code == 0
+        assert "shared-lib" in result.output
+
+
+class TestCreateWithAddDir:
+    def test_create_with_add_dir_flag(self, mocker, mock_trusty_cage_dir, tmp_path):
+        # Source dirs
+        source_dir = tmp_path / "main-project"
+        source_dir.mkdir()
+        (source_dir / "main.py").write_text("# main")
+
+        extra_dir = tmp_path / "shared-lib"
+        extra_dir.mkdir()
+        (extra_dir / "lib.py").write_text("# lib")
+
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.build_if_needed")
+        mocker.patch(f"{CLI}.volume_create")
+        mocker.patch(f"{CLI}.volume_exists", return_value=False)
+        mocker.patch(f"{CLI}.container_create")
+        mocker.patch(f"{CLI}.container_start")
+        mocker.patch(f"{CLI}.copy_to_container")
+        mocker.patch(f"{CLI}.container_exec")
+        mocker.patch(f"{CLI}.init_messaging_dirs")
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+
+        result = runner.invoke(
+            app,
+            [
+                "create",
+                "--dir",
+                str(source_dir),
+                "--no-attach",
+                "--auth-mode",
+                "api_key",
+                "--add-dir",
+                str(extra_dir),
+            ],
+        )
+        assert result.exit_code == 0
+
+        # Verify meta has the additional dir
+        loaded = load_meta("main-project")
+        assert len(loaded.additional_dirs) == 1
+        assert loaded.additional_dirs[0]["name"] == "shared-lib"
+
+
+class TestAddDirCommand:
+    def test_fails_when_docker_not_running(self, mocker, mock_trusty_cage_dir):
+        mocker.patch(f"{CLI}.is_docker_running", return_value=False)
+        result = runner.invoke(app, ["add-dir", "my-cage", "/tmp/somedir"])
+        assert result.exit_code != 0
+        assert "Docker" in result.output
+
+    def test_fails_when_env_not_found(self, mocker, mock_trusty_cage_dir):
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        result = runner.invoke(app, ["add-dir", "nonexistent", "/tmp/somedir"])
+        assert result.exit_code != 0
+        assert "not found" in result.output
+
+    def test_fails_when_dir_does_not_exist(self, mocker, mock_trusty_cage_dir):
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.env_exists", return_value=True)
+        mocker.patch(
+            f"{CLI}.load_meta",
+            return_value=MetaJson(
+                name="my-cage",
+                repo_url="",
+                created_at="now",
+                volume_name="isolated-dev-my-cage",
+                container_name="isolated-dev-my-cage",
+                host_clone_path="/tmp/repo",
+                auth_mode="api_key",
+            ),
+        )
+        result = runner.invoke(app, ["add-dir", "my-cage", "/nonexistent/path"])
+        assert result.exit_code != 0
+        assert "does not exist" in result.output
+
+    def test_fails_on_name_collision_with_project(
+        self, mocker, mock_trusty_cage_dir, tmp_path
+    ):
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.env_exists", return_value=True)
+        mocker.patch(
+            f"{CLI}.load_meta",
+            return_value=MetaJson(
+                name="my-cage",
+                repo_url="",
+                created_at="now",
+                volume_name="isolated-dev-my-cage",
+                container_name="isolated-dev-my-cage",
+                host_clone_path="/tmp/repo",
+                auth_mode="api_key",
+            ),
+        )
+        project_dir = tmp_path / "project"
+        project_dir.mkdir()
+        result = runner.invoke(app, ["add-dir", "my-cage", str(project_dir)])
+        assert result.exit_code != 0
+        assert "project" in result.output.lower()
+
+    def test_fails_on_duplicate_dir_name(self, mocker, mock_trusty_cage_dir, tmp_path):
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.env_exists", return_value=True)
+        meta = MetaJson(
+            name="my-cage",
+            repo_url="",
+            created_at="now",
+            volume_name="isolated-dev-my-cage",
+            container_name="isolated-dev-my-cage",
+            host_clone_path="/tmp/repo",
+            auth_mode="api_key",
+            additional_dirs=[
+                {
+                    "name": "shared-lib",
+                    "host_source_path": "/tmp/lib",
+                    "host_clone_path": "/tmp/clone",
+                    "volume_name": "vol",
+                    "container_path": "/home/trustycage/shared-lib",
+                    "added_at": "now",
+                }
+            ],
+        )
+        mocker.patch(f"{CLI}.load_meta", return_value=meta)
+        lib_dir = tmp_path / "shared-lib"
+        lib_dir.mkdir()
+        result = runner.invoke(app, ["add-dir", "my-cage", str(lib_dir)])
+        assert result.exit_code != 0
+        assert "already exists" in result.output.lower()
+
+    def test_successful_add_dir(self, mocker, mock_trusty_cage_dir, tmp_path):
+        # Create source dir with a file
+        source = tmp_path / "shared-lib"
+        source.mkdir()
+        (source / "lib.py").write_text("# lib")
+
+        # Create meta on disk so save_meta works
+        create_meta(
+            name="my-cage",
+            repo_url="https://github.com/user/repo",
+            auth_mode="api_key",
+        )
+
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.volume_create")
+        mocker.patch(f"{CLI}.volume_exists", return_value=False)
+        mocker.patch(f"{CLI}.container_recreate")
+        mocker.patch(f"{CLI}.copy_to_container")
+        mocker.patch(f"{CLI}.container_exec")
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+
+        result = runner.invoke(app, ["add-dir", "my-cage", str(source)])
+        assert result.exit_code == 0
+        assert "added" in result.output.lower()
+
+        # Verify meta was updated
+        loaded = load_meta("my-cage")
+        assert len(loaded.additional_dirs) == 1
+        assert loaded.additional_dirs[0]["name"] == "shared-lib"
+
+
+class TestRemoveDirCommand:
+    def test_fails_when_env_not_found(self, mocker, mock_trusty_cage_dir):
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        result = runner.invoke(app, ["remove-dir", "nonexistent", "shared-lib"])
+        assert result.exit_code != 0
+        assert "not found" in result.output
+
+    def test_fails_when_dir_not_in_meta(self, mocker, mock_trusty_cage_dir):
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.env_exists", return_value=True)
+        mocker.patch(
+            f"{CLI}.load_meta",
+            return_value=MetaJson(
+                name="my-cage",
+                repo_url="",
+                created_at="now",
+                volume_name="isolated-dev-my-cage",
+                container_name="isolated-dev-my-cage",
+                host_clone_path="/tmp/repo",
+                auth_mode="api_key",
+            ),
+        )
+        result = runner.invoke(app, ["remove-dir", "my-cage", "nonexistent"])
+        assert result.exit_code != 0
+        assert "not found" in result.output.lower()
+
+    def test_successful_remove_dir(self, mocker, mock_trusty_cage_dir):
+        meta = create_meta(
+            name="my-cage",
+            repo_url="https://github.com/user/repo",
+            auth_mode="api_key",
+        )
+        dirs_path = get_env_dir("my-cage") / "dirs" / "shared-lib"
+        dirs_path.mkdir(parents=True)
+        dir_entry = {
+            "name": "shared-lib",
+            "host_source_path": "/tmp/shared-lib",
+            "host_clone_path": str(dirs_path),
+            "volume_name": "isolated-dev-my-cage-shared-lib",
+            "container_path": "/home/trustycage/shared-lib",
+            "added_at": "2026-03-30T12:00:00+00:00",
+        }
+        meta.additional_dirs = [dir_entry]
+        save_meta(meta)
+
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_recreate")
+        mocker.patch(f"{CLI}.container_exec")
+        mocker.patch(f"{CLI}.volume_exists", return_value=True)
+        mocker.patch(f"{CLI}.volume_remove")
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+
+        result = runner.invoke(app, ["remove-dir", "my-cage", "shared-lib", "--yes"])
+        assert result.exit_code == 0
+        assert "removed" in result.output.lower()
+
+        loaded = load_meta("my-cage")
+        assert len(loaded.additional_dirs) == 0

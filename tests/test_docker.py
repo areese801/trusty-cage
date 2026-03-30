@@ -9,8 +9,10 @@ import pytest
 from trusty_cage.docker import (
     DockerError,
     _run,
+    container_create,
     container_exists,
     container_is_running,
+    container_recreate,
     is_docker_running,
     volume_exists,
 )
@@ -111,6 +113,78 @@ class TestContainerIsRunning:
             ),
         )
         assert container_is_running("mycontainer") is False
+
+
+class TestContainerCreate:
+    def test_multiple_volume_mounts(self, mocker):
+        mock_run = mocker.patch("trusty_cage.docker._run")
+        container_create(
+            name="test-container",
+            image="trusty-cage:latest",
+            volume_mounts=[
+                "vol-main:/home/trustycage/project",
+                "vol-lib:/home/trustycage/shared-lib",
+            ],
+            hostname="test",
+            cap_add=["NET_ADMIN"],
+        )
+        args = mock_run.call_args[0][0]
+        assert args.count("-v") == 2
+        assert "vol-main:/home/trustycage/project" in args
+        assert "vol-lib:/home/trustycage/shared-lib" in args
+
+    def test_no_volume_mounts(self, mocker):
+        mock_run = mocker.patch("trusty_cage.docker._run")
+        container_create(
+            name="test-container",
+            image="trusty-cage:latest",
+        )
+        args = mock_run.call_args[0][0]
+        assert "-v" not in args
+
+
+class TestContainerRecreate:
+    def test_recreate_stops_removes_creates_starts(self, mocker):
+        mock_stop = mocker.patch("trusty_cage.docker.container_stop")
+        mock_remove = mocker.patch("trusty_cage.docker.container_remove")
+        mock_create = mocker.patch("trusty_cage.docker.container_create")
+        mock_start = mocker.patch("trusty_cage.docker.container_start")
+        mocker.patch("trusty_cage.docker.container_is_running", return_value=True)
+
+        container_recreate(
+            name="isolated-dev-test",
+            image="trusty-cage:latest",
+            volume_mounts=["vol1:/path1", "vol2:/path2"],
+            hostname="test",
+            cap_add=["NET_ADMIN"],
+        )
+
+        mock_stop.assert_called_once_with("isolated-dev-test")
+        mock_remove.assert_called_once_with("isolated-dev-test")
+        mock_create.assert_called_once_with(
+            name="isolated-dev-test",
+            image="trusty-cage:latest",
+            volume_mounts=["vol1:/path1", "vol2:/path2"],
+            hostname="test",
+            cap_add=["NET_ADMIN"],
+        )
+        mock_start.assert_called_once_with("isolated-dev-test")
+
+    def test_recreate_skips_stop_when_not_running(self, mocker):
+        mock_stop = mocker.patch("trusty_cage.docker.container_stop")
+        mocker.patch("trusty_cage.docker.container_remove")
+        mocker.patch("trusty_cage.docker.container_create")
+        mocker.patch("trusty_cage.docker.container_start")
+        mocker.patch("trusty_cage.docker.container_is_running", return_value=False)
+
+        container_recreate(
+            name="isolated-dev-test",
+            image="trusty-cage:latest",
+            volume_mounts=["vol1:/path1"],
+            hostname="test",
+        )
+
+        mock_stop.assert_not_called()
 
 
 class TestVolumeExists:
