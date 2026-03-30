@@ -437,7 +437,7 @@ The inner Claude works with full autonomy inside the container — installing pa
 
 #### Install the skills
 
-Install the companion Claude Code plugin to get the cage-orchestrator and cage-iterate skills:
+Install the companion plugin by running these commands inside a [Claude Code](https://claude.ai/code) session:
 
 ```
 /plugin marketplace add areese801/trusty-cage-plugin
