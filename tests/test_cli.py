@@ -1683,6 +1683,7 @@ class TestRemoveDirCommand:
 
         mocker.patch(f"{CLI}.is_docker_running", return_value=True)
         mocker.patch(f"{CLI}.container_recreate")
+        mocker.patch(f"{CLI}.container_exec")
         mocker.patch(f"{CLI}.volume_exists", return_value=True)
         mocker.patch(f"{CLI}.volume_remove")
         mocker.patch(f"{CLI}.container_is_running", return_value=True)

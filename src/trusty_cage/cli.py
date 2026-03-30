@@ -730,6 +730,25 @@ def exists(
         raise typer.Exit(1)
 
 
+def _ensure_git_config(container_name: str) -> None:
+    """
+    Ensure git user config exists inside the container.
+
+    This is needed after container recreation since ~/.gitconfig lives in
+    the container filesystem (not a volume) and gets lost on rm/create.
+    """
+    container_exec(
+        container_name,
+        ["git", "config", "--global", "user.name", "trusty-cage"],
+        user=constants.CONTAINER_USER,
+    )
+    container_exec(
+        container_name,
+        ["git", "config", "--global", "user.email", "trusty-cage@localhost"],
+        user=constants.CONTAINER_USER,
+    )
+
+
 def _build_volume_mounts(meta) -> list[str]:
     """
     Build the full list of volume mounts for a cage from its MetaJson.
@@ -826,6 +845,7 @@ def add_dir(
         hostname=meta.name,
         cap_add=["NET_ADMIN"],
     )
+    _ensure_git_config(meta.container_name)
 
     # Copy files into container
     with tempfile.TemporaryDirectory(prefix="trusty-cage-adddir-") as tmpdir:
@@ -931,6 +951,7 @@ def remove_dir(
         hostname=meta.name,
         cap_add=["NET_ADMIN"],
     )
+    _ensure_git_config(meta.container_name)
 
     # Remove volume
     if volume_exists(dir_entry.volume_name):
@@ -1163,9 +1184,11 @@ def _diff_one(
             if ln.startswith("*deleting"):
                 filename = ln.split(None, 1)[1].strip()
                 changes.append((filename, "deleted"))
-            elif len(ln) > 12 and ln[0] in (">", "<", "c"):
-                code = ln[:11]
-                filename = ln[12:].strip()
+            elif ln[0:1] in (">", "<", "c"):
+                parts = ln.split(None, 1)
+                if len(parts) < 2:
+                    continue
+                code, filename = parts[0], parts[1].strip()
                 if not filename or filename.endswith("/"):
                     continue
                 if "+" * 4 in code:
