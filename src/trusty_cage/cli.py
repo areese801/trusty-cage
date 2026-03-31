@@ -1774,7 +1774,15 @@ def _format_stream_line(line: str) -> str | None:
 
 def _format_stream_msg(msg: dict) -> str | None:
     """
-    Format a parsed stream-json message. Separated for defensive error handling.
+    Format a parsed stream-json message with color-coded output.
+
+    Color scheme:
+      INIT     — bold blue (session start)
+      THINKING — dim italic (collapsed to first line)
+      TOOL     — yellow label, dim command/path
+      RESULT   — dim (tool output, less important)
+      CLAUDE   — bold white (agent's own words — most important)
+      DONE     — bold green label, dim cost/duration
     """
 
     t = msg.get("type", "")
@@ -1782,7 +1790,7 @@ def _format_stream_msg(msg: dict) -> str | None:
     if t == "system":
         model = msg.get("model", "unknown")
         sid = msg.get("session_id", "")[:8]
-        return f"[bold blue]INIT[/bold blue] session={sid}... model={model}"
+        return f"[bold blue]INIT[/bold blue] [dim]session={sid}... model={model}[/dim]"
 
     if t == "assistant":
         parts = []
@@ -1791,31 +1799,41 @@ def _format_stream_msg(msg: dict) -> str | None:
             if bt == "thinking":
                 thought = block.get("thinking", "")
                 if thought:
-                    parts.append(f"[dim]THINKING[/dim] {thought[:150]}")
+                    first_line = thought.split("\n", 1)[0][:100]
+                    parts.append(f"[dim italic]THINKING {first_line}[/dim italic]")
             elif bt == "tool_use":
                 tool = block.get("name", "")
                 inp = block.get("input", {})
                 if tool == "Bash":
-                    parts.append(
-                        f"[yellow]TOOL[/yellow] {tool}: {inp.get('command', '')[:120]}"
-                    )
+                    cmd = inp.get("command", "")[:120]
+                    parts.append(f"[yellow]TOOL[/yellow] [dim]{tool}:[/dim] {cmd}")
                 elif tool in ("Write", "Edit"):
+                    path = inp.get("file_path", "")
+                    parts.append(f"[yellow]TOOL[/yellow] [dim]{tool}:[/dim] {path}")
+                elif tool == "Read":
+                    path = inp.get("file_path", "")
+                    parts.append(f"[yellow]TOOL[/yellow] [dim]{tool}:[/dim] {path}")
+                elif tool == "Grep":
+                    pattern = inp.get("pattern", "")[:80]
                     parts.append(
-                        f"[yellow]TOOL[/yellow] {tool}: {inp.get('file_path', '')}"
+                        f"[yellow]TOOL[/yellow] [dim]{tool}:[/dim] /{pattern}/"
                     )
+                elif tool == "Glob":
+                    pattern = inp.get("pattern", "")
+                    parts.append(f"[yellow]TOOL[/yellow] [dim]{tool}:[/dim] {pattern}")
                 else:
-                    parts.append(f"[yellow]TOOL[/yellow] {tool}")
+                    parts.append(f"[yellow]TOOL[/yellow] [dim]{tool}[/dim]")
             elif bt == "text":
                 text = block.get("text", "")
                 if text:
-                    parts.append(f"[green]CLAUDE[/green] {text[:200]}")
+                    parts.append(f"[bold]CLAUDE[/bold] {text[:200]}")
         return "\n".join(parts) if parts else None
 
     if t == "user":
         for block in msg.get("message", {}).get("content", []):
             if block.get("type") == "tool_result":
                 content = block.get("content", "")[:150]
-                return f"[dim]RESULT[/dim] {content}"
+                return f"[dim]RESULT {content}[/dim]"
         return None
 
     if t == "result":
@@ -1824,7 +1842,7 @@ def _format_stream_msg(msg: dict) -> str | None:
         duration = msg.get("duration_ms", 0) / 1000
         return (
             f"[bold green]DONE[/bold green] {result_text}\n"
-            f"     cost=${cost:.4f} duration={duration:.1f}s"
+            f"[dim]     cost=${cost:.4f} duration={duration:.1f}s[/dim]"
         )
 
     return None
