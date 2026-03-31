@@ -976,7 +976,7 @@ def _collect_exclude_patterns(
 ) -> list[str]:
     """
     Build a deduplicated list of rsync --exclude patterns from .git/,
-    .gitignore, .cageprotect, and explicit --protect globs.
+    .gitignore, .cageprotect, venv/, and explicit --protect globs.
     """
     seen: set[str] = set()
     patterns: list[str] = []
@@ -989,6 +989,8 @@ def _collect_exclude_patterns(
     _add(".git/")
     _add(".gitignore")
     _add(".cageprotect")
+    _add("venv/")
+    _add(".venv/")
 
     for filename in (".gitignore", ".cageprotect"):
         path = target / filename
@@ -1836,7 +1838,8 @@ def _pretty_stream(input_stream: "IO[str]") -> None:
         for line in input_stream:
             formatted = _format_stream_line(line)
             if formatted:
-                rprint(formatted)
+                ts = datetime.now().strftime("%H:%M:%S")
+                rprint(f"[dim]{ts}[/dim] {formatted}")
     except KeyboardInterrupt:
         pass
 
@@ -2004,17 +2007,20 @@ def outbox_read(
         while True:
             messages = read_outbox(meta.container_name, since_cursor=True)
             for msg in messages:
+                ts = msg.timestamp[11:19] if len(msg.timestamp) >= 19 else ""
                 if msg.type == "progress_update":
-                    rprint(f"[dim]Progress:[/dim] {msg.payload.get('status', '')}")
+                    rprint(
+                        f"[dim]{ts}[/dim] [dim]Progress:[/dim] {msg.payload.get('status', '')}"
+                    )
                 elif msg.type == "error":
                     rprint(
-                        f"[bold red]Error:[/bold red] {msg.payload.get('message', '')}"
+                        f"[dim]{ts}[/dim] [bold red]Error:[/bold red] {msg.payload.get('message', '')}"
                     )
                 elif msg.type == "going_idle":
                     reason = msg.payload.get("reason", "Inner agent went idle")
                     waited = msg.payload.get("waited_seconds", 0)
                     rprint(
-                        f"[bold yellow]Inner agent idle:[/bold yellow] {reason} "
+                        f"[dim]{ts}[/dim] [bold yellow]Inner agent idle:[/bold yellow] {reason} "
                         f"(waited {waited}s)"
                     )
                     if messages:
@@ -2024,16 +2030,18 @@ def outbox_read(
                     summary = msg.payload.get("summary", "")
                     exit_code = msg.payload.get("exit_code", 0)
                     if exit_code == 0:
-                        rprint(f"[bold green]Task complete:[/bold green] {summary}")
+                        rprint(
+                            f"[dim]{ts}[/dim] [bold green]Task complete:[/bold green] {summary}"
+                        )
                     else:
                         rprint(
-                            f"[bold yellow]Task complete (exit {exit_code}):[/bold yellow] {summary}"
+                            f"[dim]{ts}[/dim] [bold yellow]Task complete (exit {exit_code}):[/bold yellow] {summary}"
                         )
                     if messages:
                         set_cursor(meta.container_name, messages[-1].timestamp)
                     raise typer.Exit(exit_code)
                 else:
-                    rprint(f"[dim][{msg.type}][/dim] {msg.payload}")
+                    rprint(f"[dim]{ts}[/dim] [dim][{msg.type}][/dim] {msg.payload}")
 
             if messages:
                 set_cursor(meta.container_name, messages[-1].timestamp)

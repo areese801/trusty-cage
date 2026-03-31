@@ -557,7 +557,13 @@ class TestExportGitignoreExcludes:
             for i in range(len(rsync_cmd))
             if rsync_cmd[i] == "--exclude"
         ]
-        assert exclude_args == [".git/", ".gitignore", ".cageprotect"]
+        assert exclude_args == [
+            ".git/",
+            ".gitignore",
+            ".cageprotect",
+            "venv/",
+            ".venv/",
+        ]
 
     def test_gitignore_patterns_added_as_excludes(
         self, mocker, mock_trusty_cage_dir, tmp_path
@@ -595,6 +601,7 @@ class TestExportGitignoreExcludes:
             ".gitignore",
             ".cageprotect",
             "venv/",
+            ".venv/",
             ".env",
             "__pycache__/",
         ]
@@ -632,7 +639,14 @@ class TestExportGitignoreExcludes:
             for i in range(len(rsync_cmd))
             if rsync_cmd[i] == "--exclude"
         ]
-        assert exclude_args == [".git/", ".gitignore", ".cageprotect", "venv/", ".env"]
+        assert exclude_args == [
+            ".git/",
+            ".gitignore",
+            ".cageprotect",
+            "venv/",
+            ".venv/",
+            ".env",
+        ]
 
 
 class TestAttachCommand:
