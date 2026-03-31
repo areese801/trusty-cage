@@ -456,6 +456,12 @@ def create(
 @app.command()
 def attach(
     name: str = typer.Argument(help="Name of the environment to attach to"),
+    watch: bool = typer.Option(
+        False,
+        "--watch",
+        "-w",
+        help="Attach in read-only mode (observe without disrupting)",
+    ),
 ) -> None:
     """
     Attach to an existing environment's interactive tmux session.
@@ -598,12 +604,16 @@ def attach(
         )
         rprint("[dim]Created tmux session with 3 panes (editor, claude, shell).[/dim]")
 
-    rprint(f"[bold green]Attaching to '{name}'...[/bold green]")
+    mode = "read-only" if watch else "interactive"
+    rprint(f"[bold green]Attaching to '{name}' ({mode})...[/bold green]")
 
     # Replace process with docker exec into tmux
+    tmux_cmd = ["tmux", "attach-session", "-t", constants.TMUX_SESSION]
+    if watch:
+        tmux_cmd.append("-r")
     exec_replace(
         meta.container_name,
-        ["tmux", "attach-session", "-t", constants.TMUX_SESSION],
+        tmux_cmd,
         env=exec_env,
     )
 
