@@ -66,6 +66,7 @@ from trusty_cage.messaging import (
     set_cursor,
 )
 from trusty_cage.network import apply_network_policy
+from trusty_cage.stats import compute_stats, render_stats_table
 
 app = typer.Typer(
     name="trusty-cage",
@@ -1048,6 +1049,9 @@ def export(
     all_dirs: bool = typer.Option(
         False, "--all", help="Export main project and all additional dirs"
     ),
+    stats: bool = typer.Option(
+        False, "--stats", help="Show language-aware code statistics after export"
+    ),
 ) -> None:
     """
     Export work from container back to host clone.
@@ -1119,6 +1123,13 @@ def export(
                 meta.container_name, Path(tmpdir), container_path
             )
 
+            # Compute stats before rsync overwrites the host
+            stat_results = None
+            if stats:
+                stat_results, used_cloc = compute_stats(
+                    before=host_target, after=export_dir
+                )
+
             rsync_cmd = ["rsync", "-a"]
             if delete:
                 rsync_cmd.append("--delete")
@@ -1137,6 +1148,9 @@ def export(
                 capture_output=True,
                 text=True,
             )
+
+            if stat_results:
+                render_stats_table(stat_results, used_cloc)
 
         rprint(f"[bold green]Exported {label} to {host_target}[/bold green]")
 
@@ -1159,6 +1173,7 @@ def _diff_one(
     target: Path,
     label: str,
     full: bool,
+    stats: bool = False,
 ) -> None:
     """
     Show diff for one container directory against its host clone.
@@ -1235,6 +1250,10 @@ def _diff_one(
             rprint(table)
             rprint(f"[dim]{len(changes)} file(s) changed ({label})[/dim]")
 
+        if stats and changes:
+            stat_results, used_cloc = compute_stats(before=target, after=export_dir)
+            render_stats_table(stat_results, used_cloc)
+
 
 @app.command()
 def diff(
@@ -1252,6 +1271,9 @@ def diff(
     ),
     all_dirs: bool = typer.Option(
         False, "--all", help="Diff main project and all additional dirs"
+    ),
+    stats: bool = typer.Option(
+        False, "--stats", help="Show language-aware code statistics"
     ),
 ) -> None:
     """
@@ -1313,7 +1335,9 @@ def diff(
         for container_path, host_target, label in diff_targets:
             if len(diff_targets) > 1:
                 rprint(f"\n[bold blue]Diff: {label}[/bold blue]")
-            _diff_one(meta.container_name, container_path, host_target, label, full)
+            _diff_one(
+                meta.container_name, container_path, host_target, label, full, stats
+            )
     finally:
         if was_stopped:
             container_stop(meta.container_name)
