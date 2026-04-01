@@ -60,6 +60,7 @@ class TestCreateCommand:
         """
         mocker.patch(f"{CLI}.is_docker_running", return_value=True)
         mocker.patch(f"{CLI}.build_if_needed", return_value=False)
+        mocker.patch(f"{CLI}.volume_exists", return_value=False)
         mocker.patch(f"{CLI}.volume_create")
         mocker.patch(f"{CLI}.container_create")
         mocker.patch(f"{CLI}.container_start")
@@ -119,6 +120,7 @@ class TestCreateCommand:
         """
         mocker.patch(f"{CLI}.is_docker_running", return_value=True)
         mocker.patch(f"{CLI}.build_if_needed", return_value=False)
+        mocker.patch(f"{CLI}.volume_exists", return_value=False)
         mocker.patch(f"{CLI}.volume_create")
         mocker.patch(f"{CLI}.container_create")
         mocker.patch(f"{CLI}.container_start")
@@ -156,6 +158,7 @@ class TestCreateFromDir:
         """Mock all external dependencies for create --dir tests."""
         mocker.patch(f"{CLI}.is_docker_running", return_value=True)
         mocker.patch(f"{CLI}.build_if_needed")
+        mocker.patch(f"{CLI}.volume_exists", return_value=False)
         mocker.patch(f"{CLI}.volume_create")
         mocker.patch(f"{CLI}.container_create")
         mocker.patch(f"{CLI}.container_start")

@@ -191,6 +191,15 @@ def create(
         rprint(f"[bold red]Error: Environment '{env_name}' already exists.[/bold red]")
         raise typer.Exit(1)
 
+    # Clean up orphaned volume from a previous incomplete destroy
+    expected_volume = f"{constants.VOLUME_PREFIX}{env_name}"
+    if volume_exists(expected_volume):
+        rprint(
+            f"[bold yellow]Warning: Removing orphaned volume '{expected_volume}' "
+            f"from a previous environment.[/bold yellow]"
+        )
+        volume_remove(expected_volume)
+
     # Resolve auth mode: use flag if provided, otherwise prompt
     if auth_mode:
         if auth_mode not in constants.AUTH_MODES:
