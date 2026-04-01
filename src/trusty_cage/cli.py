@@ -191,8 +191,15 @@ def create(
         rprint(f"[bold red]Error: Environment '{env_name}' already exists.[/bold red]")
         raise typer.Exit(1)
 
-    # Clean up orphaned volume from a previous incomplete destroy
+    # Clean up orphaned container and volume from a previous incomplete destroy
+    expected_container = f"{constants.CONTAINER_PREFIX}{env_name}"
     expected_volume = f"{constants.VOLUME_PREFIX}{env_name}"
+    if container_exists(expected_container):
+        rprint(
+            f"[bold yellow]Warning: Removing orphaned container '{expected_container}' "
+            f"from a previous environment.[/bold yellow]"
+        )
+        container_remove(expected_container, force=True)
     if volume_exists(expected_volume):
         rprint(
             f"[bold yellow]Warning: Removing orphaned volume '{expected_volume}' "
