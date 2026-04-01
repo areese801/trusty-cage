@@ -191,7 +191,18 @@ def create(
         rprint(f"[bold red]Error: Environment '{env_name}' already exists.[/bold red]")
         raise typer.Exit(1)
 
-    # Clean up orphaned container and volume from a previous incomplete destroy
+    # Clean up ALL orphaned artifacts from a previous destroy.
+    # tc destroy removes container + volume + meta.json but preserves the host
+    # clone directory (so the user can grab exported work). If they then re-create
+    # with the same name, we must wipe the stale env dir — otherwise the old host
+    # clone files get copied into the fresh cage, producing "ghost work".
+    env_dir = get_env_dir(env_name)
+    if env_dir.exists():
+        rprint(
+            "[bold yellow]Warning: Cleaning up stale environment directory "
+            "from a previous session.[/bold yellow]"
+        )
+        shutil.rmtree(env_dir)
     expected_container = f"{constants.CONTAINER_PREFIX}{env_name}"
     expected_volume = f"{constants.VOLUME_PREFIX}{env_name}"
     if container_exists(expected_container):
@@ -261,6 +272,12 @@ def create(
                 "-a",
                 "--exclude",
                 ".git/",
+                "--exclude",
+                "venv/",
+                "--exclude",
+                ".venv/",
+                "--exclude",
+                "__pycache__/",
                 str(source_dir) + "/",
                 str(host_clone) + "/",
             ],
