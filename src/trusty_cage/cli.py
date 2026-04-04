@@ -67,6 +67,7 @@ from trusty_cage.messaging import (
 )
 from trusty_cage.network import apply_network_policy
 from trusty_cage.stats import compute_stats, render_stats_table
+from trusty_cage.version_check import check_for_updates
 
 app = typer.Typer(
     name="trusty-cage",
@@ -158,6 +159,7 @@ def create(
     Create a new isolated development environment from a git repo or local directory.
     """
     _require_docker()
+    check_for_updates()
 
     # Validate: exactly one source
     if git_repo_url and dir_path:
@@ -494,6 +496,7 @@ def attach(
     Attach to an existing environment's interactive tmux session.
     """
     _require_docker()
+    check_for_updates()
 
     if not env_exists(name):
         rprint(f"[bold red]Error: Environment '{name}' not found.[/bold red]")
