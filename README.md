@@ -83,7 +83,7 @@ git push
 
 **To copy exported code into your own cloned repository:**
 
-If you already have the repo cloned elsewhere (e.g. `~/projects/personal/obsidian-todoist`), you can copy the exported files into it instead. Make sure you're `cd`'d into your clone first, and **don't forget the trailing `/`** on the source path — on macOS (BSD `cp`), the trailing `/` copies the *contents* of the directory rather than the directory itself:
+If you already have the repo cloned elsewhere (e.g. `~/projects/personal/obsidian-todoist`), you can copy the exported files into it instead. Make sure you're `cd`'d into your clone first, and **don't forget the trailing `/`** on the source path — on macOS (BSD `cp`), the trailing `/` copies the _contents_ of the directory rather than the directory itself:
 
 ```bash
 cd ~/projects/personal/obsidian-todoist
@@ -185,28 +185,28 @@ The name `project` is reserved for the main project directory.
 
 ## Commands
 
-| Command | Description |
-|---|---|
-| `trusty-cage --version` | Show version and exit |
-| `trusty-cage init [--force]` | Create config directory and default `.env` file |
-| `trusty-cage create <url> [--name] [--no-attach] [--auth-mode] [--dockerfile] [--add-dir]` | Create a new environment from a git repo |
-| `trusty-cage create --dir <path> [--name] [--no-attach] [--auth-mode] [--dockerfile] [--add-dir]` | Create from a local directory (no remote required) |
-| `trusty-cage attach <name>` | Attach to an existing environment |
-| `trusty-cage stop <name>` | Stop a container (preserves work) |
-| `trusty-cage list [--json]` | List all environments with status and additional dirs |
-| `trusty-cage exists <name>` | Check if an environment exists (exit code 0/1) |
-| `trusty-cage add-dir <name> <path> [--name]` | Add a local directory to an existing cage |
-| `trusty-cage remove-dir <name> <dir-name> [-y/--yes]` | Remove an additional directory from a cage |
-| `trusty-cage export <name> [-y/--yes] [--output-dir] [--delete] [--protect] [--dir] [--all]` | Copy work back to host clone (safe default: no `--delete`) |
-| `trusty-cage diff <name> [--full] [--output-dir] [--dir] [--all]` | Preview what `export` would change (dry run) |
-| `trusty-cage sync <name> [--files] [-y/--yes] [--dir] [--all]` | Push host files into a cage (inverse of export) |
-| `trusty-cage destroy <name> [-y/--yes]` | Remove container, all volumes, and additional dirs (keeps host clone) |
-| `trusty-cage rebuild-image [--dockerfile]` | Force rebuild the Docker image |
-| `trusty-cage auth <name> [--login]` | Refresh or verify credentials for an environment |
+| Command                                                                                               | Description                                                                   |
+| ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `trusty-cage --version`                                                                               | Show version and exit                                                         |
+| `trusty-cage init [--force]`                                                                          | Create config directory and default `.env` file                               |
+| `trusty-cage create <url> [--name] [--no-attach] [--auth-mode] [--dockerfile] [--add-dir]`            | Create a new environment from a git repo                                      |
+| `trusty-cage create --dir <path> [--name] [--no-attach] [--auth-mode] [--dockerfile] [--add-dir]`     | Create from a local directory (no remote required)                            |
+| `trusty-cage attach <name>`                                                                           | Attach to an existing environment                                             |
+| `trusty-cage stop <name>`                                                                             | Stop a container (preserves work)                                             |
+| `trusty-cage list [--json]`                                                                           | List all environments with status and additional dirs                         |
+| `trusty-cage exists <name>`                                                                           | Check if an environment exists (exit code 0/1)                                |
+| `trusty-cage add-dir <name> <path> [--name]`                                                          | Add a local directory to an existing cage                                     |
+| `trusty-cage remove-dir <name> <dir-name> [-y/--yes]`                                                 | Remove an additional directory from a cage                                    |
+| `trusty-cage export <name> [-y/--yes] [--output-dir] [--delete] [--protect] [--dir] [--all]`          | Copy work back to host clone (safe default: no `--delete`)                    |
+| `trusty-cage diff <name> [--full] [--output-dir] [--dir] [--all]`                                     | Preview what `export` would change (dry run)                                  |
+| `trusty-cage sync <name> [--files] [-y/--yes] [--dir] [--all]`                                        | Push host files into a cage (inverse of export)                               |
+| `trusty-cage destroy <name> [-y/--yes]`                                                               | Remove container, all volumes, and additional dirs (keeps host clone)         |
+| `trusty-cage rebuild-image [--dockerfile]`                                                            | Force rebuild the Docker image                                                |
+| `trusty-cage auth <name> [--login]`                                                                   | Refresh or verify credentials for an environment                              |
 | `trusty-cage launch <name> -p/--prompt\|--prompt-file\|--test [--background] [--no-inject-messaging]` | Launch Claude Code inside a cage (messaging instructions injected by default) |
-| `trusty-cage logs [name] [-f] [-r/--raw] [-n/--lines N]` | Stream inner Claude's reasoning (pretty-printed by default) |
-| `trusty-cage outbox <name> [-a/--all] [--json] [--poll] [--timeout] [--interval]` | Read messages from a cage's outbox |
-| `trusty-cage inbox <name> <type> <payload_json>` | Send a message to a cage's inbox |
+| `trusty-cage logs [name] [-f] [-r/--raw] [-n/--lines N]`                                              | Stream inner Claude's reasoning (pretty-printed by default)                   |
+| `trusty-cage outbox <name> [-a/--all] [--json] [--poll] [--timeout] [--interval]`                     | Read messages from a cage's outbox                                            |
+| `trusty-cage inbox <name> <type> <payload_json>`                                                      | Send a message to a cage's inbox                                              |
 
 ## Export, Diff, and Sync
 
@@ -222,18 +222,27 @@ tc export myenv -y --dir shared-lib    # export a specific additional dir
 tc export myenv -y --all               # export main project + all additional dirs
 ```
 
-Files matching `.gitignore` and `.cageprotect` patterns are always excluded from both overwrite and deletion, even with `--delete`.
+Files matching patterns in your `.gitignore` and `.cageprotect` are always excluded from both overwrite and deletion, even with `--delete`.
 
 ### `.cageprotect` file
 
 Create a `.cageprotect` file in your project root to protect host-only files during export. Same format as `.gitignore` — one pattern per line, `#` for comments:
 
 ```
-# Host-only config
+# Host-only config (never touched by tc export)
 CLAUDE.md
 .env.production
 secrets/
+
+# Protect host .gitignore if you don't want the cage version overwriting it
+.gitignore
 ```
+
+**How it works:** `tc export` rsyncs files from the cage to the host. Patterns in `.gitignore` (read from the host target) are excluded from both overwrite and deletion. `.cageprotect` adds additional patterns that you want protected beyond what `.gitignore` covers.
+
+**Hardcoded exclusions:** `.git/`, `.cageprotect`, `venv/`, and `.venv/` are always excluded, regardless of config.
+
+**About `.gitignore`:** The cage's `.gitignore` file itself **does** transfer to the host during export — if an agent adds a new pattern to `.gitignore` inside the cage, that change reaches the host. If you want to protect the host's `.gitignore` from being overwritten, list it in `.cageprotect`.
 
 ### Preview with `tc diff`
 
@@ -272,14 +281,14 @@ tc launch myenv --prompt "Continue"    # resume work in cage
 
 Configuration is resolved in order: CLI flags > environment variables > `~/.trusty-cage/.env` > defaults.
 
-| Variable | Default | Description |
-|---|---|---|
-| `TRUSTY_CAGE_DOTFILES_REPO` | *(empty)* | HTTPS URL of dotfiles repo to clone into containers |
-| `TRUSTY_CAGE_PYTHON_VERSION` | `3.12` | Python version installed via pyenv |
-| `TRUSTY_CAGE_DEFAULT_SHELL` | `zsh` | Default shell inside the container |
-| `TRUSTY_CAGE_DEFAULT_AUTH_MODE` | `api_key` | Auth mode: `api_key` or `subscription` |
-| `TRUSTY_CAGE_TMUX_PREFIX` | `C-a` | tmux prefix key inside containers (default `Ctrl-a` to avoid conflict with host `Ctrl-b`) |
-| `ANTHROPIC_API_KEY` | *(none)* | API key for Claude Code (required for `api_key` auth mode) |
+| Variable                        | Default   | Description                                                                               |
+| ------------------------------- | --------- | ----------------------------------------------------------------------------------------- |
+| `TRUSTY_CAGE_DOTFILES_REPO`     | _(empty)_ | HTTPS URL of dotfiles repo to clone into containers                                       |
+| `TRUSTY_CAGE_PYTHON_VERSION`    | `3.12`    | Python version installed via pyenv                                                        |
+| `TRUSTY_CAGE_DEFAULT_SHELL`     | `zsh`     | Default shell inside the container                                                        |
+| `TRUSTY_CAGE_DEFAULT_AUTH_MODE` | `api_key` | Auth mode: `api_key` or `subscription`                                                    |
+| `TRUSTY_CAGE_TMUX_PREFIX`       | `C-a`     | tmux prefix key inside containers (default `Ctrl-a` to avoid conflict with host `Ctrl-b`) |
+| `ANTHROPIC_API_KEY`             | _(none)_  | API key for Claude Code (required for `api_key` auth mode)                                |
 
 Run `trusty-cage init` to create `~/.trusty-cage/.env` with a commented template you can customize.
 
@@ -454,16 +463,16 @@ The container includes a file-based message bus for structured communication bet
 
 **Message types:**
 
-| Type | Direction | Purpose |
-|---|---|---|
-| `task_complete` | inner -> outer | Signal task is done (includes summary) |
-| `progress_update` | inner -> outer | Report what's being worked on |
-| `info_request` | inner -> outer | Ask for files/data from the host |
-| `error` | inner -> outer | Report a blocker |
-| `info_response` | outer -> inner | Respond to an info_request |
-| `ack` | outer -> inner | Acknowledge receipt of a message |
-| `task_revision` | outer -> inner | Send revised instructions after review |
-| `going_idle` | inner -> outer | Inner Claude's polling timed out, session ending |
+| Type              | Direction      | Purpose                                          |
+| ----------------- | -------------- | ------------------------------------------------ |
+| `task_complete`   | inner -> outer | Signal task is done (includes summary)           |
+| `progress_update` | inner -> outer | Report what's being worked on                    |
+| `info_request`    | inner -> outer | Ask for files/data from the host                 |
+| `error`           | inner -> outer | Report a blocker                                 |
+| `info_response`   | outer -> inner | Respond to an info_request                       |
+| `ack`             | outer -> inner | Acknowledge receipt of a message                 |
+| `task_revision`   | outer -> inner | Send revised instructions after review           |
+| `going_idle`      | inner -> outer | Inner Claude's polling timed out, session ending |
 
 **Message format:**
 
@@ -514,12 +523,14 @@ The skills activate automatically when you ask Claude to run something in a cage
 The container is the blast radius. If an agent does something destructive, your host is unaffected.
 
 **What agents can do inside:**
+
 - Clone/fetch public repos over HTTPS
 - Browse the web, read docs, hit public APIs
 - Install packages (pip, apt, npm)
 - Full read/write access to the project directory
 
 **What agents cannot do:**
+
 - Push to any git remote (no credentials present)
 - Use SSH (port 22 blocked)
 - Pull Docker images from Docker Hub (blocked)
@@ -550,3 +561,4 @@ make help
 ## License
 
 MIT
+test
