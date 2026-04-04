@@ -193,6 +193,33 @@ def create(
         rprint(f"[bold red]Error: Environment '{env_name}' already exists.[/bold red]")
         raise typer.Exit(1)
 
+    # Clean up ALL orphaned artifacts from a previous destroy.
+    # tc destroy removes container + volume + meta.json but preserves the host
+    # clone directory (so the user can grab exported work). If they then re-create
+    # with the same name, we must wipe the stale env dir — otherwise the old host
+    # clone files get copied into the fresh cage, producing "ghost work".
+    env_dir = get_env_dir(env_name)
+    if env_dir.exists():
+        rprint(
+            "[bold yellow]Warning: Cleaning up stale environment directory "
+            "from a previous session.[/bold yellow]"
+        )
+        shutil.rmtree(env_dir)
+    expected_container = f"{constants.CONTAINER_PREFIX}{env_name}"
+    expected_volume = f"{constants.VOLUME_PREFIX}{env_name}"
+    if container_exists(expected_container):
+        rprint(
+            f"[bold yellow]Warning: Removing orphaned container '{expected_container}' "
+            f"from a previous environment.[/bold yellow]"
+        )
+        container_remove(expected_container, force=True)
+    if volume_exists(expected_volume):
+        rprint(
+            f"[bold yellow]Warning: Removing orphaned volume '{expected_volume}' "
+            f"from a previous environment.[/bold yellow]"
+        )
+        volume_remove(expected_volume)
+
     # Resolve auth mode: use flag if provided, otherwise prompt
     if auth_mode:
         if auth_mode not in constants.AUTH_MODES:
@@ -247,6 +274,12 @@ def create(
                 "-a",
                 "--exclude",
                 ".git/",
+                "--exclude",
+                "venv/",
+                "--exclude",
+                ".venv/",
+                "--exclude",
+                "__pycache__/",
                 str(source_dir) + "/",
                 str(host_clone) + "/",
             ],
@@ -979,7 +1012,12 @@ def _collect_exclude_patterns(
 ) -> list[str]:
     """
     Build a deduplicated list of rsync --exclude patterns from .git/,
-    .gitignore, .cageprotect, venv/, and explicit --protect globs.
+    .cageprotect, venv/, and explicit --protect globs. Also reads patterns
+    from the target's .gitignore and .cageprotect files.
+
+    Note: .gitignore itself is NOT excluded — cage-side changes to .gitignore
+    will transfer to the host. Users who want to preserve the host's .gitignore
+    should list it in .cageprotect.
     """
     seen: set[str] = set()
     patterns: list[str] = []
@@ -990,7 +1028,6 @@ def _collect_exclude_patterns(
             patterns.append(pat)
 
     _add(".git/")
-    _add(".gitignore")
     _add(".cageprotect")
     _add("venv/")
     _add(".venv/")
