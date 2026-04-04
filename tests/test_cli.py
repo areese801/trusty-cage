@@ -565,7 +565,6 @@ class TestExportGitignoreExcludes:
         ]
         assert exclude_args == [
             ".git/",
-            ".gitignore",
             ".cageprotect",
             "venv/",
             ".venv/",
@@ -604,7 +603,6 @@ class TestExportGitignoreExcludes:
         ]
         assert exclude_args == [
             ".git/",
-            ".gitignore",
             ".cageprotect",
             "venv/",
             ".venv/",
@@ -647,7 +645,6 @@ class TestExportGitignoreExcludes:
         ]
         assert exclude_args == [
             ".git/",
-            ".gitignore",
             ".cageprotect",
             "venv/",
             ".venv/",
