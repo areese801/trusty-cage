@@ -1009,7 +1009,12 @@ def _collect_exclude_patterns(
 ) -> list[str]:
     """
     Build a deduplicated list of rsync --exclude patterns from .git/,
-    .gitignore, .cageprotect, venv/, and explicit --protect globs.
+    .cageprotect, venv/, and explicit --protect globs. Also reads patterns
+    from the target's .gitignore and .cageprotect files.
+
+    Note: .gitignore itself is NOT excluded — cage-side changes to .gitignore
+    will transfer to the host. Users who want to preserve the host's .gitignore
+    should list it in .cageprotect.
     """
     seen: set[str] = set()
     patterns: list[str] = []
@@ -1020,7 +1025,6 @@ def _collect_exclude_patterns(
             patterns.append(pat)
 
     _add(".git/")
-    _add(".gitignore")
     _add(".cageprotect")
     _add("venv/")
     _add(".venv/")
