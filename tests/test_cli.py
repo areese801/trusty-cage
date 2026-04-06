@@ -1109,6 +1109,58 @@ class TestDiffCommand:
         assert "--dry-run" in rsync_cmd
         assert "-i" in rsync_cmd
 
+    def test_diff_default_excludes_delete_flag(self, mocker, mock_trusty_cage_dir):
+        from pathlib import Path
+
+        from trusty_cage.environment import create_meta
+
+        meta = create_meta(
+            name="myenv", repo_url="https://a.com/r", auth_mode="api_key"
+        )
+        Path(meta.host_clone_path).mkdir(parents=True, exist_ok=True)
+
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+        mocker.patch(f"{CLI}.copy_from_container")
+        mock_rsync = mocker.patch(
+            f"{CLI}.subprocess.run",
+            return_value=subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="", stderr=""
+            ),
+        )
+
+        result = runner.invoke(app, ["diff", "myenv"])
+        assert result.exit_code == 0
+        rsync_cmd = mock_rsync.call_args[0][0]
+        assert "--delete" not in rsync_cmd
+
+    def test_diff_with_delete_flag_includes_deletions(
+        self, mocker, mock_trusty_cage_dir
+    ):
+        from pathlib import Path
+
+        from trusty_cage.environment import create_meta
+
+        meta = create_meta(
+            name="myenv", repo_url="https://a.com/r", auth_mode="api_key"
+        )
+        Path(meta.host_clone_path).mkdir(parents=True, exist_ok=True)
+
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+        mocker.patch(f"{CLI}.copy_from_container")
+        mock_rsync = mocker.patch(
+            f"{CLI}.subprocess.run",
+            return_value=subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="", stderr=""
+            ),
+        )
+
+        result = runner.invoke(app, ["diff", "myenv", "--delete"])
+        assert result.exit_code == 0
+        rsync_cmd = mock_rsync.call_args[0][0]
+        assert "--delete" in rsync_cmd
+
     def test_diff_with_output_dir(self, mocker, mock_trusty_cage_dir, tmp_path):
         from trusty_cage.environment import create_meta
 
