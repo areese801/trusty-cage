@@ -1216,6 +1216,7 @@ def _diff_one(
     label: str,
     full: bool,
     stats: bool = False,
+    delete: bool = False,
 ) -> None:
     """
     Show diff for one container directory against its host clone.
@@ -1223,7 +1224,9 @@ def _diff_one(
     with tempfile.TemporaryDirectory(prefix="trusty-cage-diff-") as tmpdir:
         export_dir = _export_to_tempdir(container_name, Path(tmpdir), container_path)
 
-        rsync_cmd = ["rsync", "-a", "--dry-run", "-i", "--delete"]
+        rsync_cmd = ["rsync", "-a", "--dry-run", "-i"]
+        if delete:
+            rsync_cmd.append("--delete")
         for pat in _collect_exclude_patterns(target):
             rsync_cmd.extend(["--exclude", pat])
         rsync_cmd.extend([str(export_dir) + "/", str(target) + "/"])
@@ -1317,6 +1320,11 @@ def diff(
     stats: bool = typer.Option(
         False, "--stats", help="Show language-aware code statistics"
     ),
+    delete: bool = typer.Option(
+        False,
+        "--delete",
+        help="Preview deletions (matches 'tc export --delete'); off by default to match default export",
+    ),
 ) -> None:
     """
     Preview what 'tc export' would change (dry run).
@@ -1378,7 +1386,13 @@ def diff(
             if len(diff_targets) > 1:
                 rprint(f"\n[bold blue]Diff: {label}[/bold blue]")
             _diff_one(
-                meta.container_name, container_path, host_target, label, full, stats
+                meta.container_name,
+                container_path,
+                host_target,
+                label,
+                full,
+                stats,
+                delete,
             )
     finally:
         if was_stopped:
