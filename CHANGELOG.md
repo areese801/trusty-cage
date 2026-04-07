@@ -6,6 +6,11 @@ This project follows [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PA
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Post-export file-change summary.** `tc export` now prints a concise summary (N added, N modified, N deleted) after each export by inspecting `git status` in the host clone.
+
 ## [0.8.7] - 2026-04-04
 
 ### Added
