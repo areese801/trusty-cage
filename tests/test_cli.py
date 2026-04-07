@@ -568,6 +568,13 @@ class TestExportGitignoreExcludes:
             ".cageprotect",
             "venv/",
             ".venv/",
+            "__pycache__/",
+            "*.py[cod]",
+            ".pytest_cache/",
+            ".ruff_cache/",
+            ".mypy_cache/",
+            ".DS_Store",
+            "node_modules/",
         ]
 
     def test_gitignore_patterns_added_as_excludes(
@@ -601,13 +608,20 @@ class TestExportGitignoreExcludes:
             for i in range(len(rsync_cmd))
             if rsync_cmd[i] == "--exclude"
         ]
+        # venv/ and __pycache__/ from .gitignore are deduped (already in defaults)
         assert exclude_args == [
             ".git/",
             ".cageprotect",
             "venv/",
             ".venv/",
-            ".env",
             "__pycache__/",
+            "*.py[cod]",
+            ".pytest_cache/",
+            ".ruff_cache/",
+            ".mypy_cache/",
+            ".DS_Store",
+            "node_modules/",
+            ".env",
         ]
 
     def test_gitignore_skips_comments_and_blanks(
@@ -643,11 +657,19 @@ class TestExportGitignoreExcludes:
             for i in range(len(rsync_cmd))
             if rsync_cmd[i] == "--exclude"
         ]
+        # venv/ from .gitignore is deduped; cache defaults appear before .env
         assert exclude_args == [
             ".git/",
             ".cageprotect",
             "venv/",
             ".venv/",
+            "__pycache__/",
+            "*.py[cod]",
+            ".pytest_cache/",
+            ".ruff_cache/",
+            ".mypy_cache/",
+            ".DS_Store",
+            "node_modules/",
             ".env",
         ]
 
@@ -1007,6 +1029,101 @@ class TestExportProtect:
         assert excludes.count("venv/") == 1
         assert "__pycache__/" in excludes
         assert "secrets/" in excludes
+
+
+class TestCacheExcludes:
+    """Cache/build artifacts are excluded by default from export, diff, sync."""
+
+    def test_export_excludes_cache_by_default(self, mocker, mock_trusty_cage_dir):
+        from pathlib import Path
+
+        from trusty_cage.environment import create_meta
+
+        meta = create_meta(
+            name="myenv", repo_url="https://a.com/r", auth_mode="api_key"
+        )
+        Path(meta.host_clone_path).mkdir(parents=True, exist_ok=True)
+
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+        mocker.patch(f"{CLI}.copy_from_container")
+        mock_rsync = mocker.patch(f"{CLI}.subprocess.run")
+
+        result = runner.invoke(app, ["export", "myenv", "--yes"])
+        assert result.exit_code == 0
+
+        rsync_cmd = mock_rsync.call_args[0][0]
+        excludes = [
+            rsync_cmd[i + 1]
+            for i in range(len(rsync_cmd))
+            if rsync_cmd[i] == "--exclude"
+        ]
+        assert "__pycache__/" in excludes
+        assert "*.py[cod]" in excludes
+        assert ".pytest_cache/" in excludes
+        assert ".ruff_cache/" in excludes
+        assert ".mypy_cache/" in excludes
+        assert ".DS_Store" in excludes
+        assert "node_modules/" in excludes
+
+    def test_export_include_cache_skips_defaults(self, mocker, mock_trusty_cage_dir):
+        from pathlib import Path
+
+        from trusty_cage.environment import create_meta
+
+        meta = create_meta(
+            name="myenv", repo_url="https://a.com/r", auth_mode="api_key"
+        )
+        Path(meta.host_clone_path).mkdir(parents=True, exist_ok=True)
+
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+        mocker.patch(f"{CLI}.copy_from_container")
+        mock_rsync = mocker.patch(f"{CLI}.subprocess.run")
+
+        result = runner.invoke(app, ["export", "myenv", "--yes", "--include-cache"])
+        assert result.exit_code == 0
+
+        rsync_cmd = mock_rsync.call_args[0][0]
+        excludes = [
+            rsync_cmd[i + 1]
+            for i in range(len(rsync_cmd))
+            if rsync_cmd[i] == "--exclude"
+        ]
+        assert "__pycache__/" not in excludes
+        assert ".pytest_cache/" not in excludes
+
+    def test_diff_excludes_cache_by_default(self, mocker, mock_trusty_cage_dir):
+        from pathlib import Path
+
+        from trusty_cage.environment import create_meta
+
+        meta = create_meta(
+            name="myenv", repo_url="https://a.com/r", auth_mode="api_key"
+        )
+        Path(meta.host_clone_path).mkdir(parents=True, exist_ok=True)
+
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+        mocker.patch(f"{CLI}.copy_from_container")
+        mock_rsync = mocker.patch(
+            f"{CLI}.subprocess.run",
+            return_value=subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="", stderr=""
+            ),
+        )
+
+        result = runner.invoke(app, ["diff", "myenv"])
+        assert result.exit_code == 0
+
+        rsync_cmd = mock_rsync.call_args[0][0]
+        excludes = [
+            rsync_cmd[i + 1]
+            for i in range(len(rsync_cmd))
+            if rsync_cmd[i] == "--exclude"
+        ]
+        assert "__pycache__/" in excludes
+        assert ".pytest_cache/" in excludes
 
 
 class TestDiffCommand:

@@ -1006,14 +1006,29 @@ def remove_dir(
     rprint(f"[bold green]Removed '{dir_name}' from cage '{name}'.[/bold green]")
 
 
+_CACHE_EXCLUDE_PATTERNS = [
+    "__pycache__/",
+    "*.py[cod]",
+    ".pytest_cache/",
+    ".ruff_cache/",
+    ".mypy_cache/",
+    ".DS_Store",
+    "node_modules/",
+]
+
+
 def _collect_exclude_patterns(
     target: Path,
     protect: list[str] | None = None,
+    include_cache: bool = False,
 ) -> list[str]:
     """
     Build a deduplicated list of rsync --exclude patterns from .git/,
     .cageprotect, venv/, and explicit --protect globs. Also reads patterns
     from the target's .gitignore and .cageprotect files.
+
+    By default, common build/cache artifacts are excluded. Pass
+    include_cache=True to transfer them.
 
     Note: .gitignore itself is NOT excluded — cage-side changes to .gitignore
     will transfer to the host. Users who want to preserve the host's .gitignore
@@ -1031,6 +1046,10 @@ def _collect_exclude_patterns(
     _add(".cageprotect")
     _add("venv/")
     _add(".venv/")
+
+    if not include_cache:
+        for pat in _CACHE_EXCLUDE_PATTERNS:
+            _add(pat)
 
     for filename in (".gitignore", ".cageprotect"):
         path = target / filename
@@ -1093,6 +1112,11 @@ def export(
     ),
     stats: bool = typer.Option(
         False, "--stats", help="Show language-aware code statistics after export"
+    ),
+    include_cache: bool = typer.Option(
+        False,
+        "--include-cache",
+        help="Include cache/build artifacts (__pycache__, .pytest_cache, etc.)",
     ),
 ) -> None:
     """
@@ -1175,7 +1199,7 @@ def export(
             rsync_cmd = ["rsync", "-a"]
             if delete:
                 rsync_cmd.append("--delete")
-            for pat in _collect_exclude_patterns(host_target, protect):
+            for pat in _collect_exclude_patterns(host_target, protect, include_cache):
                 rsync_cmd.extend(["--exclude", pat])
             rsync_cmd.extend(
                 [
@@ -1217,6 +1241,7 @@ def _diff_one(
     full: bool,
     stats: bool = False,
     delete: bool = False,
+    include_cache: bool = False,
 ) -> None:
     """
     Show diff for one container directory against its host clone.
@@ -1227,7 +1252,7 @@ def _diff_one(
         rsync_cmd = ["rsync", "-a", "--dry-run", "-i"]
         if delete:
             rsync_cmd.append("--delete")
-        for pat in _collect_exclude_patterns(target):
+        for pat in _collect_exclude_patterns(target, include_cache=include_cache):
             rsync_cmd.extend(["--exclude", pat])
         rsync_cmd.extend([str(export_dir) + "/", str(target) + "/"])
 
@@ -1325,6 +1350,11 @@ def diff(
         "--delete",
         help="Preview deletions (matches 'tc export --delete'); off by default to match default export",
     ),
+    include_cache: bool = typer.Option(
+        False,
+        "--include-cache",
+        help="Include cache/build artifacts (__pycache__, .pytest_cache, etc.)",
+    ),
 ) -> None:
     """
     Preview what 'tc export' would change (dry run).
@@ -1393,6 +1423,7 @@ def diff(
                 full,
                 stats,
                 delete,
+                include_cache,
             )
     finally:
         if was_stopped:
@@ -1405,6 +1436,7 @@ def _sync_one(
     container_dest: str,
     label: str,
     files: list[str] | None = None,
+    include_cache: bool = False,
 ) -> None:
     """
     Sync a single host directory into the container.
@@ -1423,7 +1455,7 @@ def _sync_one(
                 shutil.copy2(src_file, dest_file)
         else:
             rsync_cmd = ["rsync", "-a"]
-            for pat in _collect_exclude_patterns(source):
+            for pat in _collect_exclude_patterns(source, include_cache=include_cache):
                 rsync_cmd.extend(["--exclude", pat])
             rsync_cmd.extend([str(source) + "/", str(stage_dir) + "/"])
             subprocess.run(rsync_cmd, check=True, capture_output=True, text=True)
@@ -1465,6 +1497,11 @@ def sync(
     ),
     all_dirs: bool = typer.Option(
         False, "--all", help="Sync main project and all additional dirs"
+    ),
+    include_cache: bool = typer.Option(
+        False,
+        "--include-cache",
+        help="Include cache/build artifacts (__pycache__, .pytest_cache, etc.)",
     ),
 ) -> None:
     """
@@ -1532,7 +1569,7 @@ def sync(
                 rprint(f"\n[bold blue]Syncing {label}...[/bold blue]")
             # --files only applies to main project (first target without --dir/--all)
             sync_files = files if (not target_dirs and not all_dirs) else None
-            _sync_one(meta, source, container_dest, label, sync_files)
+            _sync_one(meta, source, container_dest, label, sync_files, include_cache)
     finally:
         if was_stopped:
             container_stop(meta.container_name)
