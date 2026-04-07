@@ -286,6 +286,62 @@ class TestCreateFromDir:
         assert meta.repo_url == ""
 
 
+class TestSeedGitignore:
+    """Tests for _seed_gitignore helper."""
+
+    def test_seeds_python_gitignore(self, tmp_path):
+        from trusty_cage.cli import _seed_gitignore
+
+        (tmp_path / "main.py").write_text("print('hi')")
+        result = _seed_gitignore(tmp_path)
+        assert result is True
+        content = (tmp_path / ".gitignore").read_text()
+        assert "__pycache__/" in content
+        assert "venv/" in content
+        assert ".DS_Store" in content
+
+    def test_seeds_node_gitignore(self, tmp_path):
+        from trusty_cage.cli import _seed_gitignore
+
+        (tmp_path / "index.js").write_text("console.log('hi')")
+        result = _seed_gitignore(tmp_path)
+        assert result is True
+        content = (tmp_path / ".gitignore").read_text()
+        assert "node_modules/" in content
+        assert ".DS_Store" in content
+
+    def test_seeds_both_python_and_node(self, tmp_path):
+        from trusty_cage.cli import _seed_gitignore
+
+        (tmp_path / "app.py").write_text("")
+        (tmp_path / "package.json").write_text("{}")
+        result = _seed_gitignore(tmp_path)
+        assert result is True
+        content = (tmp_path / ".gitignore").read_text()
+        assert "__pycache__/" in content
+        assert "node_modules/" in content
+
+    def test_skips_if_gitignore_exists(self, tmp_path):
+        from trusty_cage.cli import _seed_gitignore
+
+        (tmp_path / ".gitignore").write_text("custom/\n")
+        (tmp_path / "main.py").write_text("")
+        result = _seed_gitignore(tmp_path)
+        assert result is False
+        assert (tmp_path / ".gitignore").read_text() == "custom/\n"
+
+    def test_seeds_universal_only_for_unknown_language(self, tmp_path):
+        from trusty_cage.cli import _seed_gitignore
+
+        (tmp_path / "data.csv").write_text("a,b,c")
+        result = _seed_gitignore(tmp_path)
+        assert result is True
+        content = (tmp_path / ".gitignore").read_text()
+        assert ".DS_Store" in content
+        assert "__pycache__/" not in content
+        assert "node_modules/" not in content
+
+
 class TestStopCommand:
     def test_fails_when_env_not_found(self, mocker, mock_trusty_cage_dir):
         mocker.patch(f"{CLI}.is_docker_running", return_value=True)
