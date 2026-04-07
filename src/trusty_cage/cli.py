@@ -129,6 +129,65 @@ def init(
     rprint("[dim]Edit it to set your dotfiles repo, Python version, etc.[/dim]")
 
 
+_GITIGNORE_UNIVERSAL = """\
+# OS
+.DS_Store
+*:Zone.Identifier
+
+# Editor / IDE
+.idea/
+.vscode/
+.zed/
+*.swp
+*.swo
+"""
+
+_GITIGNORE_PYTHON = """\
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+"""
+
+_GITIGNORE_NODE = """\
+# Node
+node_modules/
+dist/
+.next/
+"""
+
+
+def _seed_gitignore(project_dir: Path) -> bool:
+    """
+    Write a minimal .gitignore if one doesn't exist. Detects language from
+    file extensions present. Returns True if a file was written.
+    """
+    gitignore_path = project_dir / ".gitignore"
+    if gitignore_path.exists():
+        return False
+
+    extensions = {p.suffix for p in project_dir.rglob("*") if p.is_file()}
+
+    sections = [_GITIGNORE_UNIVERSAL]
+    if extensions & {".py", ".pyi"}:
+        sections.append(_GITIGNORE_PYTHON)
+    if (
+        extensions & {".js", ".ts", ".jsx", ".tsx"}
+        or (project_dir / "package.json").exists()
+    ):
+        sections.append(_GITIGNORE_NODE)
+
+    gitignore_path.write_text("\n".join(sections))
+    return True
+
+
 @app.command()
 def create(
     git_repo_url: Optional[str] = typer.Argument(
@@ -367,6 +426,25 @@ def create(
         ],
         user="root",
     )
+
+    # Seed a minimal .gitignore if none exists
+    if _seed_gitignore(host_clone):
+        rprint("[dim]Seeded .gitignore based on detected languages.[/dim]")
+        # Copy into container too
+        copy_to_container(
+            str(host_clone / ".gitignore"),
+            meta.container_name,
+            constants.CONTAINER_PROJECT_DIR + "/.gitignore",
+        )
+        container_exec(
+            meta.container_name,
+            [
+                "chown",
+                f"{constants.CONTAINER_USER}:{constants.CONTAINER_USER}",
+                constants.CONTAINER_PROJECT_DIR + "/.gitignore",
+            ],
+            user="root",
+        )
 
     # Create messaging directories for cage orchestrator communication
     init_messaging_dirs(meta.container_name)
