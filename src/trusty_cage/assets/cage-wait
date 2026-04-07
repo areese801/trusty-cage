@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+################################################################################
+# cage-wait — Block until a new message arrives in the trusty-cage inbox
+#
+# USAGE:
+#   cage-wait [--timeout SECONDS]
+#
+# Polls ~/.cage/inbox/ for messages newer than the cursor. When a new message
+# is found, prints its JSON to stdout, updates the cursor, and exits 0.
+# If no message arrives within the timeout, prints POLL_TIMEOUT and exits 1.
+#
+# POLLING SCHEDULE:
+#   0–15 min:  every 10 seconds
+#   15–60 min: every 30 seconds
+#   1–2 hr:    every 60 seconds
+#
+# DIAGNOSTICS:
+#   Timestamps are printed to stderr so they appear in tc logs without
+#   polluting the JSON output on stdout.
+#
+# EXIT CODES:
+#   0 — Message found (JSON on stdout)
+#   1 — Timeout or error (POLL_TIMEOUT on stdout)
+################################################################################
+
+set -euo pipefail
+
+INBOX_DIR="${HOME}/.cage/inbox"
+CURSOR_FILE="${HOME}/.cage/cursor/inbox.cursor"
+DEFAULT_TIMEOUT=7200
+
+# Parse arguments
+TIMEOUT="${DEFAULT_TIMEOUT}"
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --timeout)
+            TIMEOUT="$2"
+            shift 2
+            ;;
+        -h|--help)
+            echo "Usage: cage-wait [--timeout SECONDS]"
+            echo "Block until a new inbox message arrives (default timeout: ${DEFAULT_TIMEOUT}s)"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            echo "Usage: cage-wait [--timeout SECONDS]" >&2
+            exit 1
+            ;;
+    esac
+done
+
+# Read cursor (last-processed filename)
+CURSOR=$(cat "${CURSOR_FILE}" 2>/dev/null || echo "")
+
+ELAPSED=0
+echo "POLL_START: $(date -u +%Y-%m-%dT%H:%M:%S.%3NZ) timeout=${TIMEOUT}s cursor=${CURSOR:-none}" >&2
+
+while true; do
+    # Check for new messages
+    for f in $(ls -1 "${INBOX_DIR}/" 2>/dev/null | sort); do
+        if [ -z "${CURSOR}" ] || [ "${f}" \> "${CURSOR}" ]; then
+            echo "POLL_FOUND: $(date -u +%Y-%m-%dT%H:%M:%S.%3NZ) file=${f} elapsed=${ELAPSED}s" >&2
+            cat "${INBOX_DIR}/${f}"
+            echo "${f}" > "${CURSOR_FILE}"
+            exit 0
+        fi
+    done
+
+    # Check timeout
+    if [ "${ELAPSED}" -ge "${TIMEOUT}" ]; then
+        echo "POLL_TIMEOUT: $(date -u +%Y-%m-%dT%H:%M:%S.%3NZ) elapsed=${ELAPSED}s" >&2
+        echo "POLL_TIMEOUT"
+        exit 1
+    fi
+
+    # Adaptive sleep interval
+    if [ "${ELAPSED}" -lt 900 ]; then
+        INTERVAL=10
+    elif [ "${ELAPSED}" -lt 3600 ]; then
+        INTERVAL=30
+    else
+        INTERVAL=60
+    fi
+
+    sleep "${INTERVAL}"
+    ELAPSED=$((ELAPSED + INTERVAL))
+done

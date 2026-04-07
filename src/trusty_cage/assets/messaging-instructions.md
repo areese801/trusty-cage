@@ -42,9 +42,15 @@ Signal that you have no more work to do but haven't completed the task.
 cage-send going_idle '{"reason":"Waiting for host to provide API credentials"}'
 ```
 
-## Checking for Responses
+## Waiting for Responses
 
-The host can send messages to your inbox. Check it with:
+After sending `task_complete`, the host may send revised instructions. Use `cage-wait` to block until a message arrives:
+```bash
+cage-wait
+```
+This polls your inbox with adaptive intervals and prints the message JSON when one arrives. If no message arrives within 2 hours, it prints `POLL_TIMEOUT`.
+
+For one-off inbox checks (e.g., after `info_request`):
 ```bash
 ls ~/.cage/inbox/ 2>/dev/null && cat ~/.cage/inbox/*.json 2>/dev/null
 ```

@@ -58,9 +58,10 @@ RUN curl -fsSL https://github.com/neovim/neovim/releases/download/v0.11.2/nvim-l
 # Install Claude Code globally
 RUN npm install -g @anthropic-ai/claude-code
 
-# Install cage-send messaging helper
+# Install cage messaging helpers
 COPY cage-send /usr/local/bin/cage-send
-RUN chmod +x /usr/local/bin/cage-send
+COPY cage-wait /usr/local/bin/cage-wait
+RUN chmod +x /usr/local/bin/cage-send /usr/local/bin/cage-wait
 
 # Create non-root user (remove default ubuntu user that occupies UID/GID 1000)
 RUN userdel -r ubuntu 2>/dev/null || true \
