@@ -1936,3 +1936,117 @@ class TestRemoveDirCommand:
 
         loaded = load_meta("my-cage")
         assert len(loaded.additional_dirs) == 0
+
+
+class TestInboxCommand:
+    """Tests for tc inbox."""
+
+    def _setup_env(self, mocker, mock_trusty_cage_dir):
+        from trusty_cage.environment import create_meta
+
+        create_meta(name="myenv", repo_url="https://a.com/r", auth_mode="api_key")
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+
+    def test_inbox_with_json_payload(self, mocker, mock_trusty_cage_dir):
+        self._setup_env(mocker, mock_trusty_cage_dir)
+        mock_send = mocker.patch(f"{CLI}.send_to_inbox")
+        from trusty_cage.messaging import Message
+
+        mock_send.return_value = Message(
+            id="m1", type="info_response", timestamp="t", payload={}
+        )
+
+        result = runner.invoke(
+            app,
+            ["inbox", "myenv", "info_response", '{"content":"hello"}'],
+        )
+        assert result.exit_code == 0
+        assert "Sent" in result.output
+        mock_send.assert_called_once_with(
+            "isolated-dev-myenv", "info_response", {"content": "hello"}
+        )
+
+    def test_inbox_with_payload_file(self, mocker, mock_trusty_cage_dir, tmp_path):
+        self._setup_env(mocker, mock_trusty_cage_dir)
+        mock_send = mocker.patch(f"{CLI}.send_to_inbox")
+        from trusty_cage.messaging import Message
+
+        mock_send.return_value = Message(
+            id="m1", type="task_revision", timestamp="t", payload={}
+        )
+
+        instructions = "Please refactor the code to use\nmulti-line instructions here."
+        payload_file = tmp_path / "revision.txt"
+        payload_file.write_text(instructions)
+
+        result = runner.invoke(
+            app,
+            [
+                "inbox",
+                "myenv",
+                "task_revision",
+                "--payload-file",
+                str(payload_file),
+            ],
+        )
+        assert result.exit_code == 0
+        assert "Sent" in result.output
+        mock_send.assert_called_once_with(
+            "isolated-dev-myenv",
+            "task_revision",
+            {"instructions": instructions},
+        )
+
+    def test_inbox_both_payload_and_file_errors(
+        self, mocker, mock_trusty_cage_dir, tmp_path
+    ):
+        self._setup_env(mocker, mock_trusty_cage_dir)
+        payload_file = tmp_path / "rev.txt"
+        payload_file.write_text("hello")
+
+        result = runner.invoke(
+            app,
+            [
+                "inbox",
+                "myenv",
+                "info_response",
+                '{"content":"hi"}',
+                "--payload-file",
+                str(payload_file),
+            ],
+        )
+        assert result.exit_code != 0
+        assert "not both" in result.output
+
+    def test_inbox_neither_payload_nor_file_errors(self, mocker, mock_trusty_cage_dir):
+        self._setup_env(mocker, mock_trusty_cage_dir)
+
+        result = runner.invoke(app, ["inbox", "myenv", "info_response"])
+        assert result.exit_code != 0
+        assert "Provide" in result.output
+
+    def test_inbox_payload_file_not_found_errors(self, mocker, mock_trusty_cage_dir):
+        self._setup_env(mocker, mock_trusty_cage_dir)
+
+        result = runner.invoke(
+            app,
+            [
+                "inbox",
+                "myenv",
+                "task_revision",
+                "--payload-file",
+                "/tmp/nonexistent-file-xyz.txt",
+            ],
+        )
+        assert result.exit_code != 0
+        assert "not found" in result.output.lower()
+
+    def test_inbox_invalid_json_errors(self, mocker, mock_trusty_cage_dir):
+        self._setup_env(mocker, mock_trusty_cage_dir)
+
+        result = runner.invoke(
+            app, ["inbox", "myenv", "info_response", "not-valid-json"]
+        )
+        assert result.exit_code != 0
+        assert "Invalid JSON" in result.output
