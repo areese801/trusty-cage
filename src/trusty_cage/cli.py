@@ -2268,18 +2268,44 @@ def inbox_send(
     msg_type: str = typer.Argument(
         help="Message type (info_response, ack, task_revision)"
     ),
-    payload_json: str = typer.Argument(help="Payload as JSON string"),
+    payload_json: Optional[str] = typer.Argument(None, help="Payload as JSON string"),
+    payload_file: Optional[str] = typer.Option(
+        None,
+        "--payload-file",
+        help='Read payload from a file; content is wrapped as {"instructions": <content>}',
+    ),
 ) -> None:
     """
     Send a message to a cage's inbox.
     """
+    if payload_json and payload_file:
+        rprint(
+            "[bold red]Error: Provide either a JSON payload argument "
+            "or --payload-file, not both.[/bold red]"
+        )
+        raise typer.Exit(1)
+
+    if not payload_json and not payload_file:
+        rprint(
+            "[bold red]Error: Provide a JSON payload argument "
+            "or --payload-file.[/bold red]"
+        )
+        raise typer.Exit(1)
+
     meta = _require_env_running(name)
 
-    try:
-        payload = json.loads(payload_json)
-    except json.JSONDecodeError as e:
-        rprint(f"[bold red]Error: Invalid JSON payload: {e}[/bold red]")
-        raise typer.Exit(1)
+    if payload_file:
+        file_path = Path(payload_file)
+        if not file_path.is_file():
+            rprint(f"[bold red]Error: File not found: {payload_file}[/bold red]")
+            raise typer.Exit(1)
+        payload = {"instructions": file_path.read_text()}
+    else:
+        try:
+            payload = json.loads(payload_json)
+        except json.JSONDecodeError as e:
+            rprint(f"[bold red]Error: Invalid JSON payload: {e}[/bold red]")
+            raise typer.Exit(1)
 
     msg = send_to_inbox(meta.container_name, msg_type, payload)
     rprint(f"[bold green]Sent [{msg.type}][/bold green] id={msg.id}")
