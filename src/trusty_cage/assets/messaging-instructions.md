@@ -17,10 +17,11 @@ cage-send task_complete '{"summary":"Implemented feature X and added tests","exi
 cage-send task_complete '{"summary":"Failed: missing dependency ffmpeg","exit_code":1}'
 ```
 
-### progress_update
-Send periodically during long tasks so the host knows you're working.
+### progress_update (REQUIRED every 3 minutes during long tasks)
+You MUST send a `progress_update` at least every 3 minutes while working. If the host does not hear from you for more than 5 minutes, it will assume you are stuck. Include what you are currently doing and any measurable progress.
 ```bash
 cage-send progress_update '{"status":"running tests","detail":"3 of 5 passing"}'
+cage-send progress_update '{"status":"implementing feature","detail":"refactored 2 of 4 modules"}'
 ```
 
 ### error
@@ -51,5 +52,5 @@ ls ~/.cage/inbox/ 2>/dev/null && cat ~/.cage/inbox/*.json 2>/dev/null
 ## Rules
 
 1. **Always send `task_complete`** when you are done, with `exit_code` 0 for success or non-zero for failure.
-2. Send `progress_update` at least every few minutes during long tasks.
+2. **You MUST send `progress_update` at least every 3 minutes** during long tasks. If you don't, the host will assume you are stuck and may interrupt your work.
 3. If you encounter a blocker you cannot resolve, send `error` with `recoverable: true` and then `going_idle`.

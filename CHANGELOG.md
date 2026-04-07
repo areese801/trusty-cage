@@ -11,6 +11,9 @@ This project follows [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PA
 ### Added
 - **Post-export file-change summary.** `tc export` now prints a concise summary (N added, N modified, N deleted) after each export by inspecting `git status` in the host clone.
 
+### Changed
+- **Stronger `progress_update` wording in messaging instructions.** Inner Claude is now told it MUST send updates every 3 minutes or the host will assume it is stuck. Previously said "every few minutes" which was routinely ignored.
+
 ## [0.8.7] - 2026-04-04
 
 ### Added
