@@ -9,6 +9,7 @@ This project follows [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PA
 ## [Unreleased]
 
 ### Added
+- **`cage-wait` command.** New helper installed in containers alongside `cage-send`. Blocks until a new inbox message arrives (adaptive polling: 10s/30s/60s). Prints diagnostic timestamps to stderr for tracing revision pickup latency. Replaces the need for inner agents to copy a 25-line inline polling script.
 - **Post-export file-change summary.** `tc export` now prints a concise summary (N added, N modified, N deleted) after each export by inspecting `git status` in the host clone.
 
 ### Changed
