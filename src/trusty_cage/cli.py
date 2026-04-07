@@ -1182,6 +1182,44 @@ def _backup_gitignore_if_changed(host_target: Path, export_dir: Path) -> None:
         rprint("[dim]" + "".join(diff_lines).rstrip() + "[/dim]")
 
 
+def _print_export_summary(host_target: Path) -> None:
+    """
+    Print a concise summary of file changes after export by running
+    git status in the host clone.
+    """
+    git_dir = host_target / ".git"
+    if not git_dir.is_dir():
+        return
+
+    result = subprocess.run(
+        ["git", "-C", str(host_target), "status", "--short"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return
+
+    lines = [ln for ln in result.stdout.splitlines() if ln.strip()]
+    if not lines:
+        rprint("[dim]No file changes.[/dim]")
+        return
+
+    added = sum(1 for ln in lines if ln[:2].strip() == "??" or "A" in ln[:2])
+    modified = sum(1 for ln in lines if "M" in ln[:2])
+    deleted = sum(1 for ln in lines if "D" in ln[:2])
+
+    parts = []
+    if added:
+        parts.append(f"[green]{added} added[/green]")
+    if modified:
+        parts.append(f"[yellow]{modified} modified[/yellow]")
+    if deleted:
+        parts.append(f"[red]{deleted} deleted[/red]")
+
+    if parts:
+        rprint(f"[dim]Changes:[/dim] {', '.join(parts)}")
+
+
 def _export_to_tempdir(
     container_name: str, tmpdir: Path, container_path: str | None = None
 ) -> Path:
@@ -1339,6 +1377,9 @@ def export(
                 render_stats_table(stat_results, used_cloc)
 
         rprint(f"[bold green]Exported {label} to {host_target}[/bold green]")
+
+        # Show file-change summary if host_target is a git repo
+        _print_export_summary(host_target)
 
     if was_stopped:
         container_stop(meta.container_name)

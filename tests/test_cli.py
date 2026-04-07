@@ -1262,6 +1262,104 @@ class TestGitignoreBackup:
         assert (host_dir / ".gitignore.pre-export").read_text() == "new content\n"
 
 
+class TestExportSummary:
+    """Tests for post-export file-change summary."""
+
+    def _init_git_repo(self, path):
+        subprocess.run(
+            ["git", "init", "-b", "main", str(path)],
+            capture_output=True,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(path), "config", "user.email", "test@test.com"],
+            capture_output=True,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(path), "config", "user.name", "test"],
+            capture_output=True,
+            check=True,
+        )
+
+    def test_summary_shows_counts(self, tmp_path):
+        from io import StringIO
+        from unittest.mock import patch
+
+        from trusty_cage.cli import _print_export_summary
+
+        self._init_git_repo(tmp_path)
+        (tmp_path / "existing.py").write_text("old")
+        subprocess.run(
+            ["git", "-C", str(tmp_path), "add", "."],
+            capture_output=True,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(tmp_path), "commit", "-m", "init"],
+            capture_output=True,
+            check=True,
+        )
+
+        # Simulate export: modify one, add one
+        (tmp_path / "existing.py").write_text("new")
+        (tmp_path / "new_file.py").write_text("added")
+
+        output = StringIO()
+        with patch(
+            "trusty_cage.cli.rprint",
+            side_effect=lambda x: output.write(x + "\n"),
+        ):
+            _print_export_summary(tmp_path)
+
+        text = output.getvalue()
+        assert "1 added" in text
+        assert "1 modified" in text
+
+    def test_summary_no_changes(self, tmp_path):
+        from io import StringIO
+        from unittest.mock import patch
+
+        from trusty_cage.cli import _print_export_summary
+
+        self._init_git_repo(tmp_path)
+        (tmp_path / "file.py").write_text("x")
+        subprocess.run(
+            ["git", "-C", str(tmp_path), "add", "."],
+            capture_output=True,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(tmp_path), "commit", "-m", "init"],
+            capture_output=True,
+            check=True,
+        )
+
+        output = StringIO()
+        with patch(
+            "trusty_cage.cli.rprint",
+            side_effect=lambda x: output.write(x + "\n"),
+        ):
+            _print_export_summary(tmp_path)
+
+        assert "No file changes" in output.getvalue()
+
+    def test_summary_skips_non_git_dir(self, tmp_path):
+        from io import StringIO
+        from unittest.mock import patch
+
+        from trusty_cage.cli import _print_export_summary
+
+        output = StringIO()
+        with patch(
+            "trusty_cage.cli.rprint",
+            side_effect=lambda x: output.write(x + "\n"),
+        ):
+            _print_export_summary(tmp_path)
+
+        assert output.getvalue() == ""
+
+
 class TestDiffCommand:
     """Tests for tc diff."""
 
