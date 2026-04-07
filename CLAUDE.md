@@ -127,6 +127,7 @@ Terminal testing catches issues that unit tests with mocked Docker calls miss (a
 - Work happens on feature branches off `main`
 - Merges to `main` are done via PR on GitHub — never merge locally
 - Push the feature branch and open a PR
+- **Before opening a PR, update `CHANGELOG.md`** with an entry for the change (under the upcoming release, or a new version heading if cutting a release). User-facing changes must appear in the changelog.
 
 ## Release Workflow
 
