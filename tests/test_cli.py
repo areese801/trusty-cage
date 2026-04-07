@@ -1182,6 +1182,86 @@ class TestCacheExcludes:
         assert ".pytest_cache/" in excludes
 
 
+class TestGitignoreBackup:
+    """Tests for .gitignore backup on export when host and cage differ."""
+
+    def test_backup_created_when_gitignore_differs(self, tmp_path):
+        from trusty_cage.cli import _backup_gitignore_if_changed
+
+        host_dir = tmp_path / "host"
+        host_dir.mkdir()
+        cage_dir = tmp_path / "cage"
+        cage_dir.mkdir()
+
+        (host_dir / ".gitignore").write_text("venv/\n.env\n")
+        (cage_dir / ".gitignore").write_text("venv/\n")
+
+        _backup_gitignore_if_changed(host_dir, cage_dir)
+
+        backup = host_dir / ".gitignore.pre-export"
+        assert backup.exists()
+        assert backup.read_text() == "venv/\n.env\n"
+
+    def test_no_backup_when_gitignore_identical(self, tmp_path):
+        from trusty_cage.cli import _backup_gitignore_if_changed
+
+        host_dir = tmp_path / "host"
+        host_dir.mkdir()
+        cage_dir = tmp_path / "cage"
+        cage_dir.mkdir()
+
+        (host_dir / ".gitignore").write_text("venv/\n")
+        (cage_dir / ".gitignore").write_text("venv/\n")
+
+        _backup_gitignore_if_changed(host_dir, cage_dir)
+
+        assert not (host_dir / ".gitignore.pre-export").exists()
+
+    def test_no_backup_when_host_has_no_gitignore(self, tmp_path):
+        from trusty_cage.cli import _backup_gitignore_if_changed
+
+        host_dir = tmp_path / "host"
+        host_dir.mkdir()
+        cage_dir = tmp_path / "cage"
+        cage_dir.mkdir()
+
+        (cage_dir / ".gitignore").write_text("venv/\n")
+
+        _backup_gitignore_if_changed(host_dir, cage_dir)
+
+        assert not (host_dir / ".gitignore.pre-export").exists()
+
+    def test_no_backup_when_cage_has_no_gitignore(self, tmp_path):
+        from trusty_cage.cli import _backup_gitignore_if_changed
+
+        host_dir = tmp_path / "host"
+        host_dir.mkdir()
+        cage_dir = tmp_path / "cage"
+        cage_dir.mkdir()
+
+        (host_dir / ".gitignore").write_text("venv/\n")
+
+        _backup_gitignore_if_changed(host_dir, cage_dir)
+
+        assert not (host_dir / ".gitignore.pre-export").exists()
+
+    def test_backup_overwrites_previous_backup(self, tmp_path):
+        from trusty_cage.cli import _backup_gitignore_if_changed
+
+        host_dir = tmp_path / "host"
+        host_dir.mkdir()
+        cage_dir = tmp_path / "cage"
+        cage_dir.mkdir()
+
+        (host_dir / ".gitignore.pre-export").write_text("old backup\n")
+        (host_dir / ".gitignore").write_text("new content\n")
+        (cage_dir / ".gitignore").write_text("cage content\n")
+
+        _backup_gitignore_if_changed(host_dir, cage_dir)
+
+        assert (host_dir / ".gitignore.pre-export").read_text() == "new content\n"
+
+
 class TestDiffCommand:
     """Tests for tc diff."""
 

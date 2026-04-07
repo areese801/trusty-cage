@@ -2,6 +2,7 @@
 CLI entry point for trusty-cage.
 """
 
+import difflib
 import importlib.resources
 import io
 import json
@@ -1143,6 +1144,44 @@ def _collect_exclude_patterns(
     return patterns
 
 
+def _backup_gitignore_if_changed(host_target: Path, export_dir: Path) -> None:
+    """
+    If both host and cage have a .gitignore and they differ, back up the
+    host version to .gitignore.pre-export and warn the user.
+    """
+    host_gi = host_target / ".gitignore"
+    cage_gi = export_dir / ".gitignore"
+
+    if not host_gi.is_file() or not cage_gi.is_file():
+        return
+
+    host_content = host_gi.read_text()
+    cage_content = cage_gi.read_text()
+
+    if host_content == cage_content:
+        return
+
+    backup_path = host_target / ".gitignore.pre-export"
+    shutil.copy2(host_gi, backup_path)
+
+    rprint(
+        "[bold yellow]Warning: .gitignore differs between host and cage.[/bold yellow]"
+    )
+    rprint(f"[dim]Host version backed up to {backup_path}[/dim]")
+
+    # Show a concise diff
+    diff_lines = list(
+        difflib.unified_diff(
+            host_content.splitlines(keepends=True),
+            cage_content.splitlines(keepends=True),
+            fromfile=".gitignore (host)",
+            tofile=".gitignore (cage)",
+        )
+    )
+    if diff_lines:
+        rprint("[dim]" + "".join(diff_lines).rstrip() + "[/dim]")
+
+
 def _export_to_tempdir(
     container_name: str, tmpdir: Path, container_path: str | None = None
 ) -> Path:
@@ -1266,6 +1305,9 @@ def export(
             export_dir = _export_to_tempdir(
                 meta.container_name, Path(tmpdir), container_path
             )
+
+            # Protect host .gitignore from silent overwrite
+            _backup_gitignore_if_changed(host_target, export_dir)
 
             # Compute stats before rsync overwrites the host
             stat_results = None
