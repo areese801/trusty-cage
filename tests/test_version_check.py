@@ -53,26 +53,15 @@ class TestCheckForUpdates:
         mocker.patch(
             "trusty_cage.version_check._fetch_latest_version", return_value="0.8.3"
         )
-        mocker.patch("trusty_cage.version_check.needs_rebuild", return_value=False)
         check_for_updates()
         output = capsys.readouterr().out
         assert "0.8.3" in output
         assert "Update available" in output
 
-    def test_shows_rebuild_when_image_stale(self, mocker, capsys):
-        mocker.patch(
-            "trusty_cage.version_check._fetch_latest_version", return_value="0.8.3"
-        )
-        mocker.patch("trusty_cage.version_check.needs_rebuild", return_value=True)
-        check_for_updates()
-        output = capsys.readouterr().out
-        assert "rebuild-image" in output
-
     def test_silent_when_current(self, mocker, capsys):
         mocker.patch(
             "trusty_cage.version_check._fetch_latest_version", return_value="0.8.3"
         )
-        mocker.patch("trusty_cage.version_check.needs_rebuild", return_value=False)
         check_for_updates()
         output = capsys.readouterr().out
         assert output == ""
@@ -81,7 +70,6 @@ class TestCheckForUpdates:
         mocker.patch(
             "trusty_cage.version_check._fetch_latest_version", return_value=None
         )
-        mocker.patch("trusty_cage.version_check.needs_rebuild", return_value=False)
         check_for_updates()
         output = capsys.readouterr().out
         assert output == ""
