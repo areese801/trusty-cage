@@ -9,11 +9,13 @@ This project follows [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PA
 ## [Unreleased]
 
 ### Added
+- **Auto-rebuild stale Docker image.** `tc create` and `tc attach` now automatically rebuild the Docker image when the Dockerfile has changed, instead of just warning. Disable with `TRUSTY_CAGE_AUTO_REBUILD=false` in `~/.trusty-cage/.env`.
 - **`cage-wait` command.** New helper installed in containers alongside `cage-send`. Blocks until a new inbox message arrives (adaptive polling: 10s/30s/60s). Prints diagnostic timestamps to stderr for tracing revision pickup latency. Replaces the need for inner agents to copy a 25-line inline polling script.
 - **Post-export file-change summary.** `tc export` now prints a concise summary (N added, N modified, N deleted) after each export by inspecting `git status` in the host clone.
 
 ### Changed
 - **Stronger `progress_update` wording in messaging instructions.** Inner Claude is now told it MUST send updates every 3 minutes or the host will assume it is stuck. Previously said "every few minutes" which was routinely ignored.
+- **Image staleness check moved from `check_for_updates()` to `build_if_needed()`.** Eliminates the redundant "Docker image is outdated" warning when auto-rebuild is about to handle it.
 
 ## [0.8.7] - 2026-04-04
 

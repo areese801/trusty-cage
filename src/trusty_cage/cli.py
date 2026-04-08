@@ -301,11 +301,12 @@ def create(
     # Resolve Dockerfile and build image if needed
     python_version = resolve(constants.ENV_PYTHON_VERSION)
     dockerfile_path, is_custom = resolve_dockerfile(dockerfile)
-    build_if_needed(
-        python_version=python_version,
-        dockerfile_path=dockerfile_path,
-        is_custom=is_custom,
-    )
+    if resolve(constants.ENV_AUTO_REBUILD).lower() != "false":
+        build_if_needed(
+            python_version=python_version,
+            dockerfile_path=dockerfile_path,
+            is_custom=is_custom,
+        )
 
     # Set up host clone directory
     env_dir = get_env_dir(env_name)
@@ -576,6 +577,20 @@ def attach(
     """
     _require_docker()
     check_for_updates()
+
+    # Auto-rebuild image if stale (ensures next tc create uses latest image)
+    if resolve(constants.ENV_AUTO_REBUILD).lower() != "false":
+        python_version = resolve(constants.ENV_PYTHON_VERSION)
+        dockerfile_path, is_custom = resolve_dockerfile()
+        if build_if_needed(
+            python_version=python_version,
+            dockerfile_path=dockerfile_path,
+            is_custom=is_custom,
+        ):
+            rprint(
+                "[dim]Note: This cage still uses the previous image. "
+                "Destroy and recreate to use the new one.[/dim]"
+            )
 
     if not env_exists(name):
         rprint(f"[bold red]Error: Environment '{name}' not found.[/bold red]")

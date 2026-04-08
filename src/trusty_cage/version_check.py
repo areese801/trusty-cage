@@ -1,7 +1,8 @@
 """
-Check for newer versions of trusty-cage on PyPI and stale Docker images.
+Check for newer versions of trusty-cage on PyPI.
 
 Runs non-blocking on startup — network failures are silently ignored.
+Image staleness is handled by build_if_needed() in the create/attach flows.
 """
 
 import json
@@ -10,7 +11,6 @@ import urllib.request
 from rich import print as rprint
 
 from trusty_cage import __version__
-from trusty_cage.image import needs_rebuild
 
 
 PYPI_URL = "https://pypi.org/pypi/trusty-cage/json"
@@ -42,10 +42,9 @@ def _parse_version(v: str) -> tuple[int, ...]:
 
 def check_for_updates() -> None:
     """
-    Check for a newer version on PyPI and a stale Docker image.
-    Prints warnings if either is detected. Silently returns on any failure.
+    Check for a newer version on PyPI.
+    Prints a warning if a newer version is available. Silently returns on failure.
     """
-    # Check PyPI for newer version
     latest = _fetch_latest_version()
     if latest and _parse_version(latest) > _parse_version(__version__):
         rprint(
@@ -53,13 +52,3 @@ def check_for_updates() -> None:
             f"trusty-cage {__version__} -> {latest} "
             f"[dim](pip install --upgrade trusty-cage)[/dim]"
         )
-
-    # Check if Docker image is stale
-    try:
-        if needs_rebuild():
-            rprint(
-                "[bold yellow]Docker image is outdated.[/bold yellow] "
-                "[dim]Run: tc rebuild-image[/dim]"
-            )
-    except Exception:
-        pass
