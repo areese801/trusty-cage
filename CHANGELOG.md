@@ -6,15 +6,20 @@ This project follows [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PA
 
 ---
 
-## [Unreleased]
+## [0.9.0] - 2026-04-08
 
 ### Added
 - **Auto-rebuild stale Docker image.** `tc create` and `tc attach` now automatically rebuild the Docker image when the Dockerfile has changed, instead of just warning. Disable with `TRUSTY_CAGE_AUTO_REBUILD=false` in `~/.trusty-cage/.env`.
 - **`cage-wait` command.** New helper installed in containers alongside `cage-send`. Blocks until a new inbox message arrives (adaptive polling: 10s/30s/60s). Prints diagnostic timestamps to stderr for tracing revision pickup latency. Replaces the need for inner agents to copy a 25-line inline polling script.
-- **Post-export file-change summary.** `tc export` now prints a concise summary (N added, N modified, N deleted) after each export by inspecting `git status` in the host clone.
+- **`tc inbox --payload-file`.** Read message content from a file instead of inline JSON. Wraps content as `{"instructions": ...}` automatically.
+- **`.gitignore` backup on export.** When the cage's `.gitignore` differs from the host's, `tc export` backs up the host version to `.gitignore.pre-export` and prints a diff.
+- **Seed `.gitignore` at cage creation.** When no `.gitignore` exists, `tc create` generates a minimal one based on detected languages (Python, Node).
+- **Built-in cache excludes.** `tc export`, `tc diff`, and `tc sync` now exclude `__pycache__/`, `.pytest_cache/`, `.ruff_cache/`, `.mypy_cache/`, `*.py[cod]`, `.DS_Store`, and `node_modules/` by default. Pass `--include-cache` to transfer them.
+- **Post-export file-change summary.** `tc export` now prints a concise summary (N added, N modified, N deleted) after each export.
 
 ### Changed
-- **Stronger `progress_update` wording in messaging instructions.** Inner Claude is now told it MUST send updates every 3 minutes or the host will assume it is stuck. Previously said "every few minutes" which was routinely ignored.
+- **`tc diff` no longer uses `--delete` by default.** Now matches `tc export` default behavior. Pass `--delete` to preview what `tc export --delete` would do.
+- **Stronger `progress_update` wording in messaging instructions.** Inner Claude is now told it MUST send updates every 3 minutes or the host will assume it is stuck.
 - **Image staleness check moved from `check_for_updates()` to `build_if_needed()`.** Eliminates the redundant "Docker image is outdated" warning when auto-rebuild is about to handle it.
 
 ## [0.8.7] - 2026-04-04
