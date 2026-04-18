@@ -6,6 +6,12 @@ This project follows [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PA
 
 ---
 
+## [0.11.0] - 2026-04-18
+
+### Added
+- **`tc diagnose <env>` command.** Runs a diagnostic sweep against a cage and prints a report covering: inner Claude process state (alive / zombie / absent / unknown), outbox activity (total count + last message type & timestamp), inside-cage git status (modified + untracked counts, last commit), and the tail of the inner Claude stream log. Ends with an actionable suggestion (e.g. "Inner Claude exited. Work may be exportable via `tc salvage` or `tc export`."). Pass `--json` for scripted consumers. Safe to run against stopped or missing environments.
+- **Auto-diagnose on `tc outbox --poll` timeout.** When the poll times out, the same diagnostic sweep runs automatically and its report is printed before the non-zero exit. Pass `--no-diagnose` to skip.
+
 ## [0.10.0] - 2026-04-18
 
 ### Changed
