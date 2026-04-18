@@ -200,7 +200,7 @@ The name `project` is reserved for the main project directory.
 | `trusty-cage export <name> [-y/--yes] [--output-dir] [--delete] [--protect] [--dir] [--all]`          | Copy work back to host clone (safe default: no `--delete`)                    |
 | `trusty-cage diff <name> [--full] [--output-dir] [--dir] [--all]`                                     | Preview what `export` would change (dry run)                                  |
 | `trusty-cage sync <name> [--files] [-y/--yes] [--dir] [--all]`                                        | Push host files into a cage (inverse of export)                               |
-| `trusty-cage destroy <name> [-y/--yes]`                                                               | Remove container, all volumes, and additional dirs (keeps host clone)         |
+| `trusty-cage destroy <name> [-y/--yes] [--keep-host-clone]`                                           | Remove container, volumes, and host clone (pass `--keep-host-clone` to retain)|
 | `trusty-cage rebuild-image [--dockerfile]`                                                            | Force rebuild the Docker image                                                |
 | `trusty-cage auth <name> [--login]`                                                                   | Refresh or verify credentials for an environment                              |
 | `trusty-cage launch <name> -p/--prompt\|--prompt-file\|--test [--background] [--no-inject-messaging]` | Launch Claude Code inside a cage (messaging instructions injected by default) |

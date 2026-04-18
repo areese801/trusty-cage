@@ -60,7 +60,7 @@ The CLI is available as `trusty-cage` or the short alias `tc`.
 | `export <name> [--output-dir] [--delete] [--protect] [--dir] [--all]` | Copy container files → host clone via rsync (`--dir` for specific additional dirs, `--all` for everything) |
 | `diff <name> [--full] [--output-dir] [--dir] [--all]` | Preview what `tc export` would change (dry-run rsync comparison; supports `--dir`/`--all`) |
 | `sync <name> [--files] [--yes] [--dir] [--all]` | Push host files into cage (inverse of export; supports `--dir`/`--all`) |
-| `destroy <name>` | Remove container + all volumes including additional dirs (keeps host clone) |
+| `destroy <name> [--keep-host-clone]` | Remove container, all volumes, and host clone by default. Pass `--keep-host-clone` to retain the host clone at `~/.trusty-cage/envs/<name>/`. Warns on uncommitted or unpushed work before purging (unless `--yes`). |
 | `rebuild-image [--dockerfile]` | Force rebuild Docker image |
 | `auth <name> [--login]` | Refresh/verify credentials; `--login` opens interactive Claude for `/login` |
 | `launch <name> --prompt\|--prompt-file\|--test [--background] [--no-inject-messaging]` | Launch Claude inside a cage with proper auth handling (messaging instructions injected by default) |
