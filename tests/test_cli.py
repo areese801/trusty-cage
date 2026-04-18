@@ -1058,6 +1058,147 @@ class TestOutboxPollGoingIdle:
             assert result.exit_code == 2
 
 
+class TestDiagnoseCommand:
+    def test_fails_when_env_not_found(self, mocker, mock_trusty_cage_dir):
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        result = runner.invoke(app, ["diagnose", "nonexistent"])
+        assert result.exit_code != 0
+        assert "not found" in result.output
+
+    def test_diagnose_prints_report(self, mocker, mock_trusty_cage_dir):
+        from trusty_cage.diagnostics import (
+            DiagnosticReport,
+            GitSummary,
+            OutboxSummary,
+            ProcessState,
+        )
+        from trusty_cage.environment import create_meta
+
+        create_meta(name="myenv", repo_url="https://a.com/r", auth_mode="api_key")
+
+        report = DiagnosticReport(
+            env_name="myenv",
+            container_name="isolated-dev-myenv",
+            container_exists=True,
+            container_running=True,
+            process=ProcessState(state="zombie", pid=42),
+            outbox=OutboxSummary(count=1, last_type="progress_update"),
+            git=GitSummary(available=True, modified_count=1),
+            stream_tail="tail",
+            suggestion="Work may be exportable.",
+        )
+
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.run_sweep", return_value=report)
+
+        result = runner.invoke(app, ["diagnose", "myenv"])
+        assert result.exit_code == 0
+        assert "myenv" in result.output
+        assert "zombie" in result.output
+        assert "exportable" in result.output
+
+    def test_diagnose_json_output(self, mocker, mock_trusty_cage_dir):
+        from trusty_cage.diagnostics import (
+            DiagnosticReport,
+            GitSummary,
+            OutboxSummary,
+            ProcessState,
+        )
+        from trusty_cage.environment import create_meta
+
+        create_meta(name="myenv", repo_url="https://a.com/r", auth_mode="api_key")
+
+        report = DiagnosticReport(
+            env_name="myenv",
+            container_name="isolated-dev-myenv",
+            container_exists=True,
+            container_running=True,
+            process=ProcessState(state="alive", pid=1),
+            outbox=OutboxSummary(count=0),
+            git=GitSummary(available=False),
+            suggestion="ok",
+        )
+
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.run_sweep", return_value=report)
+
+        result = runner.invoke(app, ["diagnose", "myenv", "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["env_name"] == "myenv"
+        assert data["process"]["state"] == "alive"
+
+
+class TestOutboxPollAutoDiagnose:
+    """On --poll timeout, the diagnostic sweep should run by default."""
+
+    def test_timeout_triggers_sweep_by_default(self, mocker):
+        from trusty_cage.diagnostics import (
+            DiagnosticReport,
+            GitSummary,
+            OutboxSummary,
+            ProcessState,
+        )
+
+        mock_meta = MagicMock()
+        mock_meta.container_name = "isolated-dev-test"
+
+        report = DiagnosticReport(
+            env_name="test",
+            container_name="isolated-dev-test",
+            container_exists=True,
+            container_running=True,
+            process=ProcessState(state="zombie", pid=7),
+            outbox=OutboxSummary(count=0),
+            git=GitSummary(available=False),
+            suggestion="Inner Claude exited (zombie process).",
+        )
+
+        sweep = mocker.patch("trusty_cage.cli.run_sweep", return_value=report)
+
+        with (
+            patch("trusty_cage.cli._require_env_running", return_value=mock_meta),
+            patch("trusty_cage.cli.read_outbox", return_value=[]),
+            patch("trusty_cage.cli.set_cursor"),
+            patch("trusty_cage.cli.time.sleep"),
+        ):
+            result = runner.invoke(
+                app,
+                ["outbox", "test", "--poll", "--timeout", "0", "--interval", "0"],
+            )
+        assert result.exit_code == 1
+        assert sweep.called
+        assert "zombie" in result.output
+
+    def test_no_diagnose_flag_skips_sweep(self, mocker):
+        mock_meta = MagicMock()
+        mock_meta.container_name = "isolated-dev-test"
+
+        sweep = mocker.patch("trusty_cage.cli.run_sweep")
+
+        with (
+            patch("trusty_cage.cli._require_env_running", return_value=mock_meta),
+            patch("trusty_cage.cli.read_outbox", return_value=[]),
+            patch("trusty_cage.cli.set_cursor"),
+            patch("trusty_cage.cli.time.sleep"),
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "outbox",
+                    "test",
+                    "--poll",
+                    "--timeout",
+                    "0",
+                    "--interval",
+                    "0",
+                    "--no-diagnose",
+                ],
+            )
+        assert result.exit_code == 1
+        assert not sweep.called
+
+
 class TestExportDeleteDefault:
     """Export should NOT use --delete by default; opt-in with --delete flag."""
 

@@ -47,6 +47,7 @@ from trusty_cage.docker import (
     volume_exists,
     volume_remove,
 )
+from trusty_cage.diagnostics import format_report, run_sweep
 from trusty_cage.dotfiles import apply_dotfiles
 from trusty_cage.environment import (
     AdditionalDir,
@@ -2350,6 +2351,34 @@ def _require_env_running(name: str):
     return meta
 
 
+@app.command("diagnose")
+def diagnose(
+    name: str = typer.Argument(help="Name of the environment to diagnose"),
+    json_output: bool = typer.Option(False, "--json", help="Output the report as JSON"),
+) -> None:
+    """
+    Run a diagnostic sweep against a cage environment.
+
+    Checks inner Claude process state (alive/zombie/absent), outbox activity,
+    inside-cage git status, and the tail of the stream log. Prints an
+    actionable suggestion. Safe to run against stopped environments.
+    """
+    _require_docker()
+    if not env_exists(name):
+        rprint(f"[bold red]Error: Environment '{name}' not found.[/bold red]")
+        raise typer.Exit(1)
+
+    meta = load_meta(name)
+    report = run_sweep(name, meta.container_name)
+
+    if json_output:
+        print(json.dumps(report.to_dict(), indent=2))
+        return
+
+    for line in format_report(report):
+        rprint(line)
+
+
 @app.command("outbox")
 def outbox_read(
     name: str = typer.Argument(help="Name of the environment"),
@@ -2367,6 +2396,11 @@ def outbox_read(
     ),
     interval: int = typer.Option(
         30, "--interval", help="Poll interval in seconds (default: 30)"
+    ),
+    no_diagnose: bool = typer.Option(
+        False,
+        "--no-diagnose",
+        help="Skip the automatic diagnostic sweep on poll timeout",
     ),
 ) -> None:
     """
@@ -2422,6 +2456,11 @@ def outbox_read(
             elapsed = time.time() - start
             if elapsed >= timeout:
                 rprint("[bold red]Timeout waiting for task_complete.[/bold red]")
+                if not no_diagnose:
+                    rprint("")
+                    report = run_sweep(name, meta.container_name)
+                    for line in format_report(report):
+                        rprint(line)
                 raise typer.Exit(1)
 
             time.sleep(interval)

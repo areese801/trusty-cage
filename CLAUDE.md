@@ -65,6 +65,7 @@ The CLI is available as `trusty-cage` or the short alias `tc`.
 | `auth <name> [--login]` | Refresh/verify credentials; `--login` opens interactive Claude for `/login` |
 | `launch <name> --prompt\|--prompt-file\|--test [--background] [--no-inject-messaging]` | Launch Claude inside a cage with proper auth handling (messaging instructions injected by default) |
 | `logs <name> [-f] [--raw]` | Stream inner Claude's reasoning from outside the cage (pretty-print by default) |
+| `diagnose <name> [--json]` | Run a diagnostic sweep against a cage: inner Claude process state (alive/zombie/absent), outbox activity, inside-cage git status, stream-log tail, actionable suggestion |
 
 ### Host File Layout
 
