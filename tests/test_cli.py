@@ -11,7 +11,6 @@ from typer.testing import CliRunner
 from trusty_cage import __version__
 from trusty_cage.cli import app
 from trusty_cage.environment import (
-    AdditionalDir,
     MetaJson,
     create_meta,
     get_env_dir,
@@ -405,9 +404,17 @@ class TestDestroyCommand:
         """
         Passing --yes should skip the confirmation prompt.
         """
-        from trusty_cage.environment import create_meta, env_exists
+        from trusty_cage.environment import create_meta, env_exists, get_env_dir
 
-        create_meta(name="myenv", repo_url="https://a.com/r", auth_mode="api_key")
+        meta = create_meta(
+            name="myenv", repo_url="https://a.com/r", auth_mode="api_key"
+        )
+        # Create the host clone dir so we can verify it's purged
+        from pathlib import Path
+
+        Path(meta.host_clone_path).mkdir(parents=True, exist_ok=True)
+        env_dir = get_env_dir("myenv")
+
         mocker.patch(f"{CLI}.is_docker_running", return_value=True)
         mocker.patch(f"{CLI}.container_exists", return_value=True)
         mocker.patch(f"{CLI}.container_remove")
@@ -417,7 +424,9 @@ class TestDestroyCommand:
         result = runner.invoke(app, ["destroy", "myenv", "--yes"])
         assert result.exit_code == 0
         assert "Destroyed" in result.output
+        assert "Purged host clone" in result.output
         assert not env_exists("myenv")
+        assert not env_dir.exists()
 
     def test_cancels_on_no_confirm(self, mocker, mock_trusty_cage_dir):
         from trusty_cage.environment import create_meta
@@ -429,10 +438,19 @@ class TestDestroyCommand:
         assert result.exit_code == 0
         assert "Cancelled" in result.output
 
-    def test_destroys_environment(self, mocker, mock_trusty_cage_dir):
-        from trusty_cage.environment import create_meta, env_exists
+    def test_destroys_environment_and_purges_host_clone_by_default(
+        self, mocker, mock_trusty_cage_dir
+    ):
+        from trusty_cage.environment import create_meta, env_exists, get_env_dir
 
-        create_meta(name="myenv", repo_url="https://a.com/r", auth_mode="api_key")
+        meta = create_meta(
+            name="myenv", repo_url="https://a.com/r", auth_mode="api_key"
+        )
+        from pathlib import Path
+
+        Path(meta.host_clone_path).mkdir(parents=True, exist_ok=True)
+        env_dir = get_env_dir("myenv")
+
         mocker.patch(f"{CLI}.is_docker_running", return_value=True)
         mocker.patch(f"{CLI}.container_exists", return_value=True)
         mocker.patch(f"{CLI}.container_remove")
@@ -442,7 +460,102 @@ class TestDestroyCommand:
         result = runner.invoke(app, ["destroy", "myenv"], input="y\n")
         assert result.exit_code == 0
         assert "Destroyed" in result.output
+        assert "Purged host clone" in result.output
         assert not env_exists("myenv")
+        assert not env_dir.exists()
+
+    def test_keep_host_clone_preserves_repo_dir(self, mocker, mock_trusty_cage_dir):
+        from trusty_cage.environment import create_meta, env_exists, get_env_dir
+
+        meta = create_meta(
+            name="myenv", repo_url="https://a.com/r", auth_mode="api_key"
+        )
+        from pathlib import Path
+
+        Path(meta.host_clone_path).mkdir(parents=True, exist_ok=True)
+        env_dir = get_env_dir("myenv")
+
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_exists", return_value=True)
+        mocker.patch(f"{CLI}.container_remove")
+        mocker.patch(f"{CLI}.volume_exists", return_value=True)
+        mocker.patch(f"{CLI}.volume_remove")
+
+        result = runner.invoke(app, ["destroy", "myenv", "--yes", "--keep-host-clone"])
+        assert result.exit_code == 0
+        assert "Destroyed" in result.output
+        assert "Host clone preserved" in result.output
+        # env_exists checks for meta.json — that should be gone
+        assert not env_exists("myenv")
+        # But the env dir and repo/ should still exist
+        assert env_dir.exists()
+        assert Path(meta.host_clone_path).exists()
+
+    def test_warns_and_prompts_when_host_clone_has_unsaved_work(
+        self, mocker, mock_trusty_cage_dir
+    ):
+        """
+        Before purging, destroy should detect uncommitted work and prompt.
+        """
+        from trusty_cage.environment import create_meta, env_exists, get_env_dir
+
+        meta = create_meta(
+            name="myenv", repo_url="https://a.com/r", auth_mode="api_key"
+        )
+        from pathlib import Path
+
+        host_clone = Path(meta.host_clone_path)
+        host_clone.mkdir(parents=True, exist_ok=True)
+        # Initialize a real git repo with an uncommitted file
+        subprocess.run(["git", "init", "-q", "-b", "main", str(host_clone)], check=True)
+        subprocess.run(
+            ["git", "-C", str(host_clone), "config", "user.email", "t@t"],
+            check=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(host_clone), "config", "user.name", "t"], check=True
+        )
+        (host_clone / "dirty.txt").write_text("uncommitted\n")
+
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_exists", return_value=False)
+        mocker.patch(f"{CLI}.volume_exists", return_value=False)
+
+        # Decline the safety prompt → operation should cancel
+        result = runner.invoke(app, ["destroy", "myenv"], input="n\n")
+        assert result.exit_code == 0
+        assert "uncommitted" in result.output.lower()
+        assert "Cancelled" in result.output
+        # Env must still exist
+        assert env_exists("myenv")
+        assert get_env_dir("myenv").exists()
+
+    def test_yes_flag_bypasses_unsaved_work_safety_check(
+        self, mocker, mock_trusty_cage_dir
+    ):
+        """
+        --yes should skip the unsaved-work safety prompt (operator opt-in).
+        """
+        from trusty_cage.environment import create_meta, env_exists, get_env_dir
+
+        meta = create_meta(
+            name="myenv", repo_url="https://a.com/r", auth_mode="api_key"
+        )
+        from pathlib import Path
+
+        host_clone = Path(meta.host_clone_path)
+        host_clone.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "init", "-q", "-b", "main", str(host_clone)], check=True)
+        (host_clone / "dirty.txt").write_text("uncommitted\n")
+
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_exists", return_value=False)
+        mocker.patch(f"{CLI}.volume_exists", return_value=False)
+
+        result = runner.invoke(app, ["destroy", "myenv", "--yes"])
+        assert result.exit_code == 0
+        assert not env_exists("myenv")
+        assert not get_env_dir("myenv").exists()
 
 
 class TestExportCommand:

@@ -6,6 +6,11 @@ This project follows [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PA
 
 ---
 
+## [0.10.0] - 2026-04-18
+
+### Changed
+- **`tc destroy` now purges the host clone by default.** The entire `~/.trusty-cage/envs/<name>/` directory (including `repo/`) is removed. Pass `--keep-host-clone` to preserve the old behavior. Before purging, `tc destroy` inspects the host clone for uncommitted changes or unpushed commits and prompts for confirmation (unless `--yes` is set) to prevent accidental work loss.
+
 ## [0.9.0] - 2026-04-08
 
 ### Added

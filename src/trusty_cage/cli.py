@@ -1751,13 +1751,71 @@ def sync(
             container_stop(meta.container_name)
 
 
+def _host_clone_has_unsaved_work(host_clone: Path) -> Optional[str]:
+    """
+    Return a human-readable description of unsaved work in the host clone,
+    or None if the clone is clean (or not a git repo).
+
+    Checks for both uncommitted changes and unpushed commits.
+    """
+    if not host_clone.exists() or not (host_clone / ".git").exists():
+        return None
+
+    try:
+        status = subprocess.run(
+            ["git", "-C", str(host_clone), "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    except subprocess.CalledProcessError:
+        return None
+
+    try:
+        unpushed = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(host_clone),
+                "log",
+                "--branches",
+                "--not",
+                "--remotes",
+                "--oneline",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    except subprocess.CalledProcessError:
+        unpushed = ""
+
+    parts = []
+    if status:
+        n = len(status.splitlines())
+        parts.append(f"{n} uncommitted file{'s' if n != 1 else ''}")
+    if unpushed:
+        n = len(unpushed.splitlines())
+        parts.append(f"{n} unpushed commit{'s' if n != 1 else ''}")
+
+    return ", ".join(parts) if parts else None
+
+
 @app.command()
 def destroy(
     name: str = typer.Argument(help="Name of the environment to destroy"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+    keep_host_clone: bool = typer.Option(
+        False,
+        "--keep-host-clone",
+        help="Preserve the host clone at ~/.trusty-cage/envs/<name>/ (default: purge)",
+    ),
 ) -> None:
     """
-    Destroy an environment's container and volume (keeps host clone).
+    Destroy an environment's container, volume, and host clone.
+
+    By default, removes everything including the host clone at
+    ~/.trusty-cage/envs/<name>/. Pass --keep-host-clone to preserve it.
     """
     _require_docker()
 
@@ -1766,10 +1824,31 @@ def destroy(
         raise typer.Exit(1)
 
     meta = load_meta(name)
+    host_clone = Path(meta.host_clone_path)
 
-    if not yes and not Confirm.ask(
-        f"Destroy environment '{name}'? Container and volume will be removed."
-    ):
+    # Safety check: warn about unsaved work in the host clone before purging
+    if not keep_host_clone and not yes:
+        unsaved = _host_clone_has_unsaved_work(host_clone)
+        if unsaved:
+            rprint(
+                f"[bold yellow]Warning:[/bold yellow] host clone at {host_clone} "
+                f"has {unsaved}."
+            )
+            if not Confirm.ask("Purge anyway?"):
+                rprint("[dim]Cancelled.[/dim]")
+                return
+
+    if keep_host_clone:
+        prompt = (
+            f"Destroy environment '{name}'? Container and volumes will be removed "
+            f"(host clone preserved)."
+        )
+    else:
+        prompt = (
+            f"Destroy environment '{name}'? Container, volumes, and host clone "
+            f"will be removed."
+        )
+    if not yes and not Confirm.ask(prompt):
         rprint("[dim]Cancelled.[/dim]")
         return
 
@@ -1789,18 +1868,27 @@ def destroy(
             volume_remove(d["volume_name"])
             rprint(f"[dim]Removed volume {d['volume_name']}[/dim]")
 
-    # Remove dirs/ directory
-    dirs_path = get_env_dir(name) / "dirs"
-    if dirs_path.exists():
-        shutil.rmtree(dirs_path)
+    env_dir = get_env_dir(name)
 
-    # Delete meta.json (keep repo/)
-    meta_path = get_env_dir(name) / "meta.json"
-    if meta_path.exists():
-        meta_path.unlink()
+    if keep_host_clone:
+        # Remove dirs/ directory (additional dir clones), keep repo/
+        dirs_path = env_dir / "dirs"
+        if dirs_path.exists():
+            shutil.rmtree(dirs_path)
 
-    rprint(f"[bold green]Destroyed '{name}'.[/bold green]")
-    rprint(f"[dim]Host clone preserved at {meta.host_clone_path}[/dim]")
+        # Delete meta.json (keep repo/)
+        meta_path = env_dir / "meta.json"
+        if meta_path.exists():
+            meta_path.unlink()
+
+        rprint(f"[bold green]Destroyed '{name}'.[/bold green]")
+        rprint(f"[dim]Host clone preserved at {meta.host_clone_path}[/dim]")
+    else:
+        # Purge the entire env directory
+        if env_dir.exists():
+            shutil.rmtree(env_dir)
+        rprint(f"[bold green]Destroyed '{name}'.[/bold green]")
+        rprint(f"[dim]Purged host clone at {meta.host_clone_path}[/dim]")
 
 
 @app.command("rebuild-image")
