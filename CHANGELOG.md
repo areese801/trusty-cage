@@ -6,6 +6,11 @@ This project follows [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PA
 
 ---
 
+## [0.12.0] - 2026-04-19
+
+### Added
+- **`tc salvage <env>` command.** Rescues work from a cage that didn't reach `task_complete`. Runs the diagnostic sweep from `tc diagnose`, warns on alive inner Claude (mid-change), stopped/missing container, or clean-git (nothing to salvage), then exports cage files into the current directory (or `--output-dir`). Passes `--yes` to skip confirmation prompts. The cage is intentionally preserved after salvage — run `tc destroy <name>` when you no longer need it.
+
 ## [0.11.0] - 2026-04-18
 
 ### Added

@@ -208,6 +208,7 @@ The name `project` is reserved for the main project directory.
 | `trusty-cage outbox <name> [-a/--all] [--json] [--poll] [--timeout] [--interval] [--no-diagnose]`     | Read messages from a cage's outbox (auto-diagnoses on poll timeout)           |
 | `trusty-cage inbox <name> <type> <payload_json>`                                                      | Send a message to a cage's inbox                                              |
 | `trusty-cage diagnose <name> [--json]`                                                                | Diagnostic sweep: inner process state, outbox, git, stream tail, suggestion   |
+| `trusty-cage salvage <name> [-y/--yes] [--output-dir]`                                                | Rescue work from a cage that didn't reach task_complete (diagnose + export)   |
 
 ## Export, Diff, and Sync
 

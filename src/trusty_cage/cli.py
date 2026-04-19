@@ -2379,6 +2379,98 @@ def diagnose(
         rprint(line)
 
 
+@app.command("salvage")
+def salvage(
+    ctx: typer.Context,
+    name: str = typer.Argument(help="Name of the environment to salvage"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompts"),
+    output_dir: Optional[str] = typer.Option(
+        None,
+        "--output-dir",
+        help="Export into this directory (default: current working directory)",
+    ),
+) -> None:
+    """
+    Rescue work from a cage that did not reach task_complete.
+
+    Runs a diagnostic sweep, shows what was changed inside the container,
+    then exports files into the current directory (or --output-dir). The cage
+    is left intact for further inspection — run `tc destroy <name>` when you
+    no longer need it.
+    """
+    _require_docker()
+
+    if not env_exists(name):
+        rprint(f"[bold red]Error: Environment '{name}' not found.[/bold red]")
+        raise typer.Exit(1)
+
+    meta = load_meta(name)
+    report = run_sweep(name, meta.container_name)
+
+    for line in format_report(report):
+        rprint(line)
+    rprint("")
+
+    if not report.container_exists:
+        rprint(
+            "[bold red]Cannot salvage: container does not exist.[/bold red] "
+            "The environment's host clone may still hold earlier exports — "
+            f"check {meta.host_clone_path}."
+        )
+        raise typer.Exit(1)
+
+    if not report.container_running:
+        rprint(
+            "[bold red]Cannot salvage: container is stopped.[/bold red] "
+            f"Start it first: [bold]docker start {meta.container_name}[/bold] "
+            "(or `tc attach`), then re-run `tc salvage`."
+        )
+        raise typer.Exit(1)
+
+    if report.process.state == "alive":
+        rprint(
+            "[bold yellow]Note:[/bold yellow] inner Claude is still alive. "
+            "Salvaging now will export whatever state is on disk — the agent "
+            "may still be mid-change. Consider `tc outbox` first, or "
+            "`tc inbox <name> task_revision` to steer it instead."
+        )
+
+    if (
+        report.git.available
+        and report.git.modified_count == 0
+        and report.git.untracked_count == 0
+    ):
+        rprint(
+            "[bold yellow]Note:[/bold yellow] inside-cage git status is clean. "
+            "There may be no uncommitted work to salvage (export will still "
+            "run, but may be a no-op)."
+        )
+
+    if not yes and not Confirm.ask(
+        f"Export cage '{name}' to {output_dir or 'current directory'}?"
+    ):
+        rprint("[dim]Cancelled.[/dim]")
+        return
+
+    ctx.invoke(
+        export,
+        name=name,
+        yes=True,
+        output_dir=output_dir or ".",
+        delete=False,
+        protect=None,
+        target_dirs=None,
+        all_dirs=False,
+        stats=False,
+        include_cache=False,
+    )
+
+    rprint(
+        f"\n[dim]Salvaged '{name}'. Environment preserved — "
+        f"run `tc destroy {name}` when done.[/dim]"
+    )
+
+
 @app.command("outbox")
 def outbox_read(
     name: str = typer.Argument(help="Name of the environment"),
