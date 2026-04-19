@@ -66,6 +66,7 @@ The CLI is available as `trusty-cage` or the short alias `tc`.
 | `launch <name> --prompt\|--prompt-file\|--test [--background] [--no-inject-messaging]` | Launch Claude inside a cage with proper auth handling (messaging instructions injected by default) |
 | `logs <name> [-f] [--raw]` | Stream inner Claude's reasoning from outside the cage (pretty-print by default) |
 | `diagnose <name> [--json]` | Run a diagnostic sweep against a cage: inner Claude process state (alive/zombie/absent), outbox activity, inside-cage git status, stream-log tail, actionable suggestion |
+| `salvage <name> [--yes] [--output-dir]` | Rescue work from a cage that did not reach task_complete. Runs the diagnostic sweep, warns on alive-inner / clean-git / stopped-container, then exports into the current directory (or `--output-dir`). Cage is preserved — run `tc destroy <name>` when done. |
 
 ### Host File Layout
 

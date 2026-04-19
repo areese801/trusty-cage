@@ -1129,6 +1129,137 @@ class TestDiagnoseCommand:
         assert data["process"]["state"] == "alive"
 
 
+class TestSalvageCommand:
+    def _report(self, **overrides):
+        from trusty_cage.diagnostics import (
+            DiagnosticReport,
+            GitSummary,
+            OutboxSummary,
+            ProcessState,
+        )
+
+        defaults = dict(
+            env_name="myenv",
+            container_name="isolated-dev-myenv",
+            container_exists=True,
+            container_running=True,
+            process=ProcessState(state="zombie", pid=7),
+            outbox=OutboxSummary(count=2, last_type="progress_update"),
+            git=GitSummary(
+                available=True,
+                modified_count=3,
+                untracked_count=1,
+                last_commit="abc intro",
+            ),
+            stream_tail="",
+            suggestion="Work appears exportable.",
+        )
+        defaults.update(overrides)
+        return DiagnosticReport(**defaults)
+
+    def test_fails_when_env_not_found(self, mocker, mock_trusty_cage_dir):
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        result = runner.invoke(app, ["salvage", "nonexistent"])
+        assert result.exit_code != 0
+        assert "not found" in result.output
+
+    def test_fails_when_container_stopped(self, mocker, mock_trusty_cage_dir):
+        from trusty_cage.environment import create_meta
+
+        create_meta(name="myenv", repo_url="https://a.com/r", auth_mode="api_key")
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(
+            f"{CLI}.run_sweep",
+            return_value=self._report(container_running=False),
+        )
+
+        result = runner.invoke(app, ["salvage", "myenv", "--yes"])
+        assert result.exit_code == 1
+        assert "stopped" in result.output.lower()
+        assert "docker start" in result.output or "tc attach" in result.output
+
+    def test_fails_when_container_missing(self, mocker, mock_trusty_cage_dir):
+        from trusty_cage.environment import create_meta
+
+        create_meta(name="myenv", repo_url="https://a.com/r", auth_mode="api_key")
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(
+            f"{CLI}.run_sweep",
+            return_value=self._report(container_exists=False, container_running=False),
+        )
+
+        result = runner.invoke(app, ["salvage", "myenv", "--yes"])
+        assert result.exit_code == 1
+        assert "does not exist" in result.output.lower()
+
+    def test_warns_on_clean_git_status(self, mocker, mock_trusty_cage_dir):
+        from trusty_cage.diagnostics import GitSummary
+        from trusty_cage.environment import create_meta
+
+        create_meta(name="myenv", repo_url="https://a.com/r", auth_mode="api_key")
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(
+            f"{CLI}.run_sweep",
+            return_value=self._report(
+                git=GitSummary(available=True, modified_count=0, untracked_count=0)
+            ),
+        )
+        # Decline the proceed-anyway prompt → should bail out before calling export
+        mock_export = mocker.patch(f"{CLI}.export")
+
+        result = runner.invoke(app, ["salvage", "myenv"], input="n\n")
+        assert result.exit_code == 0
+        assert "clean" in result.output.lower() or "no-op" in result.output.lower()
+        assert "Cancelled" in result.output
+        assert not mock_export.called
+
+    def test_warns_when_inner_still_alive(self, mocker, mock_trusty_cage_dir):
+        from trusty_cage.diagnostics import ProcessState
+        from trusty_cage.environment import create_meta
+
+        create_meta(name="myenv", repo_url="https://a.com/r", auth_mode="api_key")
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(
+            f"{CLI}.run_sweep",
+            return_value=self._report(process=ProcessState(state="alive", pid=5)),
+        )
+        # Decline the confirmation → don't call export
+        mock_export = mocker.patch(f"{CLI}.export")
+
+        result = runner.invoke(app, ["salvage", "myenv"], input="n\n")
+        assert result.exit_code == 0
+        assert (
+            "still alive" in result.output.lower()
+            or "mid-change" in result.output.lower()
+        )
+        assert not mock_export.called
+
+    def test_happy_path_invokes_export(self, mocker, mock_trusty_cage_dir, tmp_path):
+        from pathlib import Path
+
+        from trusty_cage.environment import create_meta
+
+        meta = create_meta(
+            name="myenv", repo_url="https://a.com/r", auth_mode="api_key"
+        )
+        Path(meta.host_clone_path).mkdir(parents=True, exist_ok=True)
+
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.run_sweep", return_value=self._report())
+        # Stub out the real export logic
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+        mocker.patch(f"{CLI}.copy_from_container")
+        mocker.patch(f"{CLI}.subprocess.run")
+
+        result = runner.invoke(
+            app,
+            ["salvage", "myenv", "--yes", "--output-dir", str(tmp_path)],
+        )
+        assert result.exit_code == 0
+        assert "Salvaged" in result.output
+        assert "preserved" in result.output
+
+
 class TestOutboxPollAutoDiagnose:
     """On --poll timeout, the diagnostic sweep should run by default."""
 
