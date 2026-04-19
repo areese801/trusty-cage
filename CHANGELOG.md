@@ -11,13 +11,13 @@ This project follows [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PA
 ### Added
 - **`tc salvage <env>` command.** Rescues work from a cage that didn't reach `task_complete`. Runs the diagnostic sweep from `tc diagnose`, warns on alive inner Claude (mid-change), stopped/missing container, or clean-git (nothing to salvage), then exports cage files into the current directory (or `--output-dir`). Passes `--yes` to skip confirmation prompts. The cage is intentionally preserved after salvage — run `tc destroy <name>` when you no longer need it.
 
-## [0.11.0] - 2026-04-18
+## [0.11.0] - 2026-04-19
 
 ### Added
 - **`tc diagnose <env>` command.** Runs a diagnostic sweep against a cage and prints a report covering: inner Claude process state (alive / zombie / absent / unknown), outbox activity (total count + last message type & timestamp), inside-cage git status (modified + untracked counts, last commit), and the tail of the inner Claude stream log. Ends with an actionable suggestion (e.g. "Inner Claude exited. Work may be exportable via `tc salvage` or `tc export`."). Pass `--json` for scripted consumers. Safe to run against stopped or missing environments.
 - **Auto-diagnose on `tc outbox --poll` timeout.** When the poll times out, the same diagnostic sweep runs automatically and its report is printed before the non-zero exit. Pass `--no-diagnose` to skip.
 
-## [0.10.0] - 2026-04-18
+## [0.10.0] - 2026-04-19
 
 ### Changed
 - **`tc destroy` now purges the host clone by default.** The entire `~/.trusty-cage/envs/<name>/` directory (including `repo/`) is removed. Pass `--keep-host-clone` to preserve the old behavior. Before purging, `tc destroy` inspects the host clone for uncommitted changes or unpushed commits and prompts for confirmation (unless `--yes` is set) to prevent accidental work loss.
