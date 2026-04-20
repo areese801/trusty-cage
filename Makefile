@@ -1,17 +1,23 @@
 .PHONY: help build publish publish-test tag lint format test clean
 
+# Use the project-local venv by default; override with e.g. `make build PYTHON=python3`.
+PYTHON ?= venv/bin/python
+TWINE ?= venv/bin/twine
+RUFF ?= venv/bin/ruff
+PYTEST ?= venv/bin/pytest
+
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-15s %s\n", $$1, $$2}'
 
 build: clean ## Build wheel and sdist
-	python -m build
+	$(PYTHON) -m build
 
 publish: build ## Build, upload to PyPI, and push a v<version> git tag
-	. ./set_creds.sh && twine upload dist/*
+	. ./set_creds.sh && $(TWINE) upload dist/*
 	$(MAKE) tag
 
 publish-test: build ## Build and upload to TestPyPI (no tag)
-	. ./set_creds.sh && twine upload --repository testpypi dist/*
+	. ./set_creds.sh && $(TWINE) upload --repository testpypi dist/*
 
 tag: ## Create and push a v<version> git tag from pyproject.toml
 	@VERSION=$$(grep '^version' pyproject.toml | head -1 | cut -d'"' -f2); \
@@ -24,13 +30,13 @@ tag: ## Create and push a v<version> git tag from pyproject.toml
 	 fi
 
 lint: ## Run ruff check
-	ruff check .
+	$(RUFF) check .
 
 format: ## Run ruff format
-	ruff format .
+	$(RUFF) format .
 
 test: ## Run pytest
-	pytest -q
+	$(PYTEST) -q
 
 clean: ## Remove build artifacts
 	rm -rf dist/ build/ src/*.egg-info
