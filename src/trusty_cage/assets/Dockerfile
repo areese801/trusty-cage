@@ -93,6 +93,9 @@ RUN git clone --depth 1 https://github.com/pyenv/pyenv.git "${PYENV_ROOT}" \
     && pyenv global "${PYTHON_VERSION}" \
     && pyenv rehash
 
+# Install uv (Astral's Python package manager) — $HOME/.local/bin is already on PATH via .zshrc
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+
 # Setup LazyVim starter config
 RUN git clone --depth 1 https://github.com/LazyVim/starter /home/trustycage/.config/nvim \
     && rm -rf /home/trustycage/.config/nvim/.git

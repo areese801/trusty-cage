@@ -2,6 +2,11 @@
 Tests for image module.
 """
 
+import os
+import subprocess
+
+import pytest
+
 from trusty_cage.image import (
     compute_dockerfile_sha,
     get_asset_path,
@@ -98,3 +103,49 @@ class TestResolveDockerfile:
         (mock_trusty_cage_dir / "image.sha").write_text(bundled_sha)
 
         assert needs_rebuild(str(custom)) is True
+
+
+class TestDockerfileContents:
+    """Static checks that don't require a real Docker build."""
+
+    def test_uv_install_is_present(self):
+        dockerfile_text = open(get_asset_path("Dockerfile")).read()
+        assert "astral.sh/uv/install.sh" in dockerfile_text, (
+            "Dockerfile should preinstall uv so inner agents don't need to bootstrap it"
+        )
+
+
+@pytest.mark.docker
+@pytest.mark.skipif(
+    os.environ.get("RUN_DOCKER_TESTS") != "1",
+    reason="Set RUN_DOCKER_TESTS=1 to run real docker build tests",
+)
+class TestImageBuildIntegration:
+    """Real-build tests. Slow; skipped unless RUN_DOCKER_TESTS=1 is set."""
+
+    def test_uv_preinstalled(self):
+        from trusty_cage import constants
+        from trusty_cage.image import rebuild
+
+        rebuild()
+        result = subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--entrypoint",
+                "/usr/bin/zsh",
+                constants.IMAGE_TAG,
+                "-lc",
+                "uv --version",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, (
+            f"uv --version failed in built image: "
+            f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        )
+        assert result.stdout.startswith("uv "), (
+            f"Expected uv version banner, got: {result.stdout!r}"
+        )

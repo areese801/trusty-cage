@@ -56,3 +56,6 @@ line-length = 88
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "docker: tests that build a real Docker image (skipped unless RUN_DOCKER_TESTS=1)",
+]

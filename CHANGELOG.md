@@ -6,6 +6,11 @@ This project follows [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PA
 
 ---
 
+## [0.13.0] - TBD
+
+### Added
+- **uv preinstalled in cage image.** `uv` (Astral's Python package manager) is now installed in the bundled Dockerfile at build time. Inner agents no longer need to `pip install uv` as their first setup step.
+
 ## [0.12.0] - 2026-04-19
 
 ### Added
