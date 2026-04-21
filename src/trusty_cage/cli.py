@@ -1607,6 +1607,164 @@ def diff(
             container_stop(meta.container_name)
 
 
+@app.command()
+def patch(
+    name: str = typer.Argument(help="Name of the environment"),
+    base: str = typer.Option(
+        "main", "--base", help="Base ref to diff cage commits against"
+    ),
+    output_dir: Optional[str] = typer.Option(
+        None,
+        "--output-dir",
+        "-o",
+        help="Write patch files here (default: ./.trusty-cage-patches/<name>/)",
+    ),
+    stdout: bool = typer.Option(
+        False,
+        "--stdout",
+        help="Stream combined patch to stdout instead of writing files",
+    ),
+) -> None:
+    """
+    Emit git-format-patch output for the cage's commits ahead of <base>.
+
+    Default: writes one patch file per commit to ./.trusty-cage-patches/<name>/.
+    Apply via: git am .trusty-cage-patches/<name>/*.patch
+
+    With --stdout, streams a single combined patch. Apply via:
+      tc patch <name> --stdout | git am
+
+    This avoids the working-tree noise (cache dirs, install side-effects)
+    that tc export's rsync would otherwise bring along.
+    """
+    _require_docker()
+
+    if not env_exists(name):
+        rprint(f"[bold red]Error: Environment '{name}' not found.[/bold red]")
+        raise typer.Exit(1)
+
+    if stdout and output_dir is not None:
+        rprint(
+            "[bold red]Error: --stdout and --output-dir are mutually exclusive."
+            "[/bold red]"
+        )
+        raise typer.Exit(1)
+
+    meta = load_meta(name)
+
+    was_stopped = False
+    if not container_is_running(meta.container_name):
+        container_start(meta.container_name)
+        was_stopped = True
+
+    try:
+        # Verify base ref exists in cage
+        verify = container_exec(
+            meta.container_name,
+            [
+                "git",
+                "-C",
+                constants.CONTAINER_PROJECT_DIR,
+                "rev-parse",
+                "--verify",
+                f"{base}^{{commit}}",
+            ],
+            user=constants.CONTAINER_USER,
+            check=False,
+        )
+        if verify.returncode != 0:
+            rprint(f"[bold red]Error: base ref '{base}' not found in cage.[/bold red]")
+            if verify.stderr:
+                rprint(f"[dim]{verify.stderr.strip()}[/dim]")
+            raise typer.Exit(1)
+
+        # Count commits ahead of base
+        count_result = container_exec(
+            meta.container_name,
+            [
+                "git",
+                "-C",
+                constants.CONTAINER_PROJECT_DIR,
+                "rev-list",
+                "--count",
+                f"{base}..HEAD",
+            ],
+            user=constants.CONTAINER_USER,
+            check=False,
+        )
+        try:
+            n_commits = int(count_result.stdout.strip() or "0")
+        except ValueError:
+            n_commits = 0
+
+        if n_commits == 0:
+            rprint(f"[dim]No commits ahead of '{base}'. Nothing to patch.[/dim]")
+            return
+
+        if stdout:
+            result = container_exec(
+                meta.container_name,
+                [
+                    "git",
+                    "-C",
+                    constants.CONTAINER_PROJECT_DIR,
+                    "format-patch",
+                    "--stdout",
+                    base,
+                ],
+                user=constants.CONTAINER_USER,
+                check=True,
+            )
+            # Plain print so rich doesn't reformat the patch
+            print(result.stdout, end="")
+            return
+
+        # Resolve output directory
+        if output_dir is None:
+            output_path = Path.cwd() / ".trusty-cage-patches" / name
+        else:
+            output_path = Path(output_dir).resolve()
+
+        # Cage-side temp dir (random suffix avoids collisions across invocations)
+        cage_tmp = f"/tmp/tc-patches-{os.urandom(4).hex()}"
+        try:
+            container_exec(
+                meta.container_name,
+                [
+                    "git",
+                    "-C",
+                    constants.CONTAINER_PROJECT_DIR,
+                    "format-patch",
+                    base,
+                    "-o",
+                    cage_tmp,
+                ],
+                user=constants.CONTAINER_USER,
+                check=True,
+            )
+            output_path.mkdir(parents=True, exist_ok=True)
+            copy_from_container(
+                meta.container_name,
+                cage_tmp + "/.",
+                str(output_path),
+            )
+        finally:
+            container_exec(
+                meta.container_name,
+                ["rm", "-rf", cage_tmp],
+                user=constants.CONTAINER_USER,
+                check=False,
+            )
+
+        rprint(
+            f"[bold green]Wrote {n_commits} patch file(s) to {output_path}[/bold green]"
+        )
+        rprint(f"[dim]Apply with: git am {output_path}/*.patch[/dim]")
+    finally:
+        if was_stopped:
+            container_stop(meta.container_name)
+
+
 def _sync_one(
     meta,
     source: Path,

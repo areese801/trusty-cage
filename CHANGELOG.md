@@ -6,6 +6,11 @@ This project follows [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PA
 
 ---
 
+## [0.13.0] - TBD
+
+### Added
+- **`tc patch <env>` command.** Emits `git format-patch` output for the cage's commits ahead of a base ref (default `main`). Writes one patch file per commit to `./.trusty-cage-patches/<env>/` by default, or pass `--stdout` to stream a combined patch for `tc patch <env> --stdout | git am`. Avoids the working-tree noise (cache dirs, pip install side-effects) that `tc export`'s rsync would otherwise bring along — ideal for single-commit cages.
+
 ## [0.12.0] - 2026-04-19
 
 ### Added

@@ -2613,3 +2613,90 @@ class TestInboxCommand:
         )
         assert result.exit_code != 0
         assert "Invalid JSON" in result.output
+
+
+class TestPatchCommand:
+    def _setup(self, mocker, mock_trusty_cage_dir, n_commits: int = 2):
+        create_meta(name="myenv", repo_url="https://a.com/r", auth_mode="api_key")
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+
+        # Ordered side_effect for container_exec:
+        # 1. git rev-parse --verify (base ref check)
+        # 2. git rev-list --count  → returns n_commits
+        # 3. git format-patch ...  → happy path for file-based or --stdout
+        # 4. rm -rf cleanup (file-based path only)
+        def exec_side_effect(*args, **kwargs):
+            command = args[1] if len(args) > 1 else kwargs.get("command", [])
+            if "rev-parse" in command:
+                return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+            if "rev-list" in command:
+                return subprocess.CompletedProcess(
+                    command, 0, stdout=f"{n_commits}\n", stderr=""
+                )
+            if "format-patch" in command:
+                return subprocess.CompletedProcess(
+                    command, 0, stdout="FAKE PATCH CONTENT\n", stderr=""
+                )
+            # rm -rf cleanup
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+        mocker.patch(f"{CLI}.container_exec", side_effect=exec_side_effect)
+        mocker.patch(f"{CLI}.copy_from_container")
+        return mocker
+
+    def test_fails_when_env_not_found(self, mocker, mock_trusty_cage_dir):
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        result = runner.invoke(app, ["patch", "nonexistent"])
+        assert result.exit_code != 0
+        assert "not found" in result.output
+
+    def test_rejects_stdout_with_output_dir(self, mocker, mock_trusty_cage_dir):
+        create_meta(name="myenv", repo_url="https://a.com/r", auth_mode="api_key")
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        result = runner.invoke(
+            app, ["patch", "myenv", "--stdout", "--output-dir", "/tmp/x"]
+        )
+        assert result.exit_code != 0
+        assert "mutually exclusive" in result.output
+
+    def test_happy_path_writes_files(self, mocker, mock_trusty_cage_dir, tmp_path):
+        self._setup(mocker, mock_trusty_cage_dir, n_commits=3)
+        out = tmp_path / "patches"
+        result = runner.invoke(app, ["patch", "myenv", "--output-dir", str(out)])
+        assert result.exit_code == 0, result.output
+        assert "Wrote 3 patch file(s)" in result.output
+        assert "patches" in result.output
+        # Output directory should exist
+        assert out.exists()
+
+    def test_stdout_mode_streams_patch(self, mocker, mock_trusty_cage_dir):
+        self._setup(mocker, mock_trusty_cage_dir, n_commits=1)
+        result = runner.invoke(app, ["patch", "myenv", "--stdout"])
+        assert result.exit_code == 0
+        assert "FAKE PATCH CONTENT" in result.output
+
+    def test_no_commits_ahead_exits_zero(self, mocker, mock_trusty_cage_dir):
+        self._setup(mocker, mock_trusty_cage_dir, n_commits=0)
+        result = runner.invoke(app, ["patch", "myenv"])
+        assert result.exit_code == 0
+        assert "No commits ahead" in result.output
+
+    def test_bad_base_ref_exits_nonzero(self, mocker, mock_trusty_cage_dir):
+        create_meta(name="myenv", repo_url="https://a.com/r", auth_mode="api_key")
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+
+        def exec_side_effect(*args, **kwargs):
+            command = args[1] if len(args) > 1 else kwargs.get("command", [])
+            if "rev-parse" in command:
+                return subprocess.CompletedProcess(
+                    command, 128, stdout="", stderr="fatal: bad revision\n"
+                )
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+        mocker.patch(f"{CLI}.container_exec", side_effect=exec_side_effect)
+
+        result = runner.invoke(app, ["patch", "myenv", "--base", "nope"])
+        assert result.exit_code != 0
+        assert "base ref 'nope' not found" in result.output
