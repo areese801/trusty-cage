@@ -3,6 +3,10 @@ Code statistics for comparing directories before and after cage work.
 
 Uses cloc (if installed) for language-aware stats, with a pure-Python
 fallback based on difflib and file extension mapping.
+
+Both paths honor ``.gitignore`` and the trusty-cage default cache patterns
+(``.mypy_cache/``, ``.pytest_cache/`` etc.) so stats don't get wildly
+inflated by transient build artifacts.
 """
 
 import difflib
@@ -12,8 +16,11 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+import pathspec
 from rich import print as rprint
 from rich.table import Table
+
+from trusty_cage import ignore
 
 
 @dataclass
@@ -68,17 +75,25 @@ def _language_for_file(path: Path) -> str:
     return EXTENSION_MAP.get(path.suffix, "Other")
 
 
-def _collect_files(directory: Path) -> dict[str, list[str]]:
+def _collect_files(
+    directory: Path,
+    spec: pathspec.PathSpec | None = None,
+) -> dict[str, list[str]]:
     """
     Walk a directory and return {relative_path: lines} for text files.
     Skips .git/, binary files, and unreadable files.
+
+    When ``spec`` is provided, any path that matches the spec is skipped —
+    use this to filter out gitignored files and cache directories.
     """
     result: dict[str, list[str]] = {}
     for path in sorted(directory.rglob("*")):
         if not path.is_file():
             continue
         rel = str(path.relative_to(directory))
-        if rel.startswith(".git/") or rel.startswith(".git"):
+        if rel.startswith(".git/") or rel == ".git":
+            continue
+        if spec is not None and spec.match_file(rel):
             continue
         try:
             lines = path.read_text().splitlines()
@@ -88,14 +103,28 @@ def _collect_files(directory: Path) -> dict[str, list[str]]:
     return result
 
 
-def _cloc_stats(before: Path, after: Path) -> list[LanguageStats] | None:
+def _cloc_stats(
+    before: Path,
+    after: Path,
+    exclude_dirs: list[str] | None = None,
+) -> list[LanguageStats] | None:
     """
     Run cloc --diff --json and parse the results.
     Returns None if cloc fails.
+
+    ``exclude_dirs`` is passed to cloc as ``--exclude-dir``. Cloc does
+    not read .gitignore itself, so the caller is responsible for deriving
+    a sensible list (typically cache-dir basenames plus simple directory
+    names from .gitignore).
     """
+    cmd = ["cloc", "--diff", "--json"]
+    if exclude_dirs:
+        cmd.append(f"--exclude-dir={','.join(sorted(set(exclude_dirs)))}")
+    cmd.extend([str(before), str(after)])
+
     try:
         result = subprocess.run(
-            ["cloc", "--diff", "--json", str(before), str(after)],
+            cmd,
             capture_output=True,
             text=True,
             check=True,
@@ -142,12 +171,19 @@ def _cloc_stats(before: Path, after: Path) -> list[LanguageStats] | None:
     return [s for s in stats if s.lines_added or s.lines_removed or s.lines_modified]
 
 
-def _fallback_stats(before: Path, after: Path) -> list[LanguageStats]:
+def _fallback_stats(
+    before: Path,
+    after: Path,
+    spec: pathspec.PathSpec | None = None,
+) -> list[LanguageStats]:
     """
     Pure-Python line diff stats using difflib.
+
+    ``spec`` is applied to both sides — a path matching the spec in either
+    tree is skipped.
     """
-    before_files = _collect_files(before)
-    after_files = _collect_files(after)
+    before_files = _collect_files(before, spec=spec)
+    after_files = _collect_files(after, spec=spec)
 
     all_paths = sorted(set(before_files.keys()) | set(after_files.keys()))
 
@@ -194,19 +230,37 @@ def _fallback_stats(before: Path, after: Path) -> list[LanguageStats]:
     return [s for s in stats if s.lines_added or s.lines_removed or s.lines_modified]
 
 
-def compute_stats(before: Path, after: Path) -> tuple[list[LanguageStats], bool]:
+def compute_stats(
+    before: Path,
+    after: Path,
+    include_cache: bool = False,
+) -> tuple[list[LanguageStats], bool]:
     """
     Compute per-language line change statistics between two directories.
+
+    Honors ``.gitignore`` and the trusty-cage default cache patterns from
+    ``ignore.DEFAULT_CACHE_PATTERNS`` unless ``include_cache`` is True.
+    A file ignored by either side's rules is excluded from both sides so
+    stats don't count files that one side considers transient.
 
     Returns (stats_list, used_cloc) where used_cloc indicates whether
     cloc was used (True) or the fallback counter (False).
     """
+    spec = ignore.build_union_pathspec([before, after], include_cache=include_cache)
+
     if shutil.which("cloc"):
-        result = _cloc_stats(before, after)
+        # cloc doesn't read .gitignore; hand it directory basenames we can
+        # extract. Covers the cache dirs and simple name-only gitignore
+        # entries — which is most of what causes stats noise in practice.
+        exclude_dirs = list(ignore.DEFAULT_CACHE_PATTERNS) if not include_cache else []
+        exclude_dirs.extend(ignore.read_gitignore_lines(before))
+        exclude_dirs.extend(ignore.read_gitignore_lines(after))
+        exclude_dir_basenames = ignore.directory_basenames_from_patterns(exclude_dirs)
+        result = _cloc_stats(before, after, exclude_dirs=exclude_dir_basenames)
         if result is not None:
             return result, True
 
-    return _fallback_stats(before, after), False
+    return _fallback_stats(before, after, spec=spec), False
 
 
 def render_stats_table(stats: list[LanguageStats], used_cloc: bool) -> None:

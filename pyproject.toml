@@ -28,6 +28,7 @@ classifiers = [
 dependencies = [
     "typer[all]>=0.12",
     "python-dotenv>=1.0",
+    "pathspec>=0.12",
 ]
 
 [project.optional-dependencies]

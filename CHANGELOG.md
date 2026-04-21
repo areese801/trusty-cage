@@ -6,6 +6,14 @@ This project follows [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PA
 
 ---
 
+## [0.13.0] - TBD
+
+### Changed
+- **`tc diff --stats` and `tc export --stats` now honor `.gitignore`.** Previously the stats walked the working tree raw, inflating counts by megabytes of cache / build noise (e.g. `.mypy_cache/`, `.pytest_cache/`, `.ruff_cache/`) — on a real Kanberoo cage, a 21-file commit reported as "4,231 files / 959,711 lines". Stats now apply the union of both sides' `.gitignore` rules plus the trusty-cage default cache patterns before counting. Pass `--include-cache` (already supported by `tc export`/`tc diff`) to see raw numbers.
+
+### Added
+- **New `trusty_cage.ignore` module.** Single source of truth for gitignore/cache pattern logic used by stats, rsync exclusion, and (future) `tc tidy`. Adds `pathspec>=0.12` as a dependency.
+
 ## [0.12.0] - 2026-04-19
 
 ### Added

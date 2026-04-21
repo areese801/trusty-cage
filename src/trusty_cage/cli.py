@@ -60,6 +60,7 @@ from trusty_cage.environment import (
     load_meta,
     save_meta,
 )
+from trusty_cage import ignore
 from trusty_cage.image import build_if_needed, rebuild, resolve_dockerfile
 from trusty_cage.messaging import (
     init_messaging_dirs,
@@ -1101,63 +1102,26 @@ def remove_dir(
     rprint(f"[bold green]Removed '{dir_name}' from cage '{name}'.[/bold green]")
 
 
-_CACHE_EXCLUDE_PATTERNS = [
-    "__pycache__/",
-    "*.py[cod]",
-    ".pytest_cache/",
-    ".ruff_cache/",
-    ".mypy_cache/",
-    ".DS_Store",
-    "node_modules/",
-]
-
-
 def _collect_exclude_patterns(
     target: Path,
     protect: list[str] | None = None,
     include_cache: bool = False,
 ) -> list[str]:
     """
-    Build a deduplicated list of rsync --exclude patterns from .git/,
-    .cageprotect, venv/, and explicit --protect globs. Also reads patterns
-    from the target's .gitignore and .cageprotect files.
+    Build a deduplicated list of rsync --exclude patterns.
 
-    By default, common build/cache artifacts are excluded. Pass
-    include_cache=True to transfer them.
+    Thin wrapper over ``ignore.build_rsync_exclude_patterns`` — kept as a
+    local name so existing callers (export/diff/sync) don't need to change.
 
     Note: .gitignore itself is NOT excluded — cage-side changes to .gitignore
     will transfer to the host. Users who want to preserve the host's .gitignore
     should list it in .cageprotect.
     """
-    seen: set[str] = set()
-    patterns: list[str] = []
-
-    def _add(pat: str) -> None:
-        if pat not in seen:
-            seen.add(pat)
-            patterns.append(pat)
-
-    _add(".git/")
-    _add(".cageprotect")
-    _add("venv/")
-    _add(".venv/")
-
-    if not include_cache:
-        for pat in _CACHE_EXCLUDE_PATTERNS:
-            _add(pat)
-
-    for filename in (".gitignore", ".cageprotect"):
-        path = target / filename
-        if path.is_file():
-            for line in path.read_text().splitlines():
-                line = line.strip()
-                if line and not line.startswith("#"):
-                    _add(line)
-
-    for pat in protect or []:
-        _add(pat)
-
-    return patterns
+    return ignore.build_rsync_exclude_patterns(
+        target,
+        extra=protect or [],
+        include_cache=include_cache,
+    )
 
 
 def _backup_gitignore_if_changed(host_target: Path, export_dir: Path) -> None:
