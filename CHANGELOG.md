@@ -6,6 +6,14 @@ This project follows [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PA
 
 ---
 
+## [0.13.0] - TBD
+
+### Added
+- **`tc tidy <env>` command.** Removes cache directories (`.mypy_cache`, `.pytest_cache`, `.ruff_cache`, `__pycache__`) from the cage's project tree, recursively. Pass `--paths` to override the default list or `--dry-run` to preview what would be removed.
+
+### Changed
+- **`tc diff` and `tc export` auto-run `tc tidy` before their main work.** Silent unless cache dirs were actually found. Pass `--no-tidy` to skip, or `--include-cache` (already supported) to opt into keeping caches — both paths skip the tidy pass.
+
 ## [0.12.0] - 2026-04-19
 
 ### Added

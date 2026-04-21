@@ -1112,6 +1112,128 @@ _CACHE_EXCLUDE_PATTERNS = [
 ]
 
 
+# Directory names that `tc tidy` removes by default. Intentionally a subset
+# of _CACHE_EXCLUDE_PATTERNS: we only rm -rf directory-style entries, not
+# file globs like "*.py[cod]".
+TIDY_DEFAULT_PATHS: list[str] = [
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    "__pycache__",
+]
+
+
+def _tidy_impl(
+    container_name: str,
+    paths: list[str],
+    dry_run: bool = False,
+) -> list[str]:
+    """
+    Remove (or preview removal of) directories named in `paths` from the
+    cage's project directory, searched recursively. Returns the list of
+    directory paths that matched (for display to the caller).
+
+    Uses a single `find ... -depth -type d \\( -name X -o -name Y \\)` invocation
+    and runs `rm -rf` only when `dry_run` is False.
+    """
+    if not paths:
+        return []
+
+    name_clauses: list[str] = []
+    for i, p in enumerate(paths):
+        if i:
+            name_clauses.append("-o")
+        name_clauses.extend(["-name", p])
+
+    base_cmd = [
+        "find",
+        constants.CONTAINER_PROJECT_DIR,
+        "-depth",
+        "-type",
+        "d",
+        "(",
+        *name_clauses,
+        ")",
+    ]
+
+    # Always print matches — we surface them in dry-run and as a count
+    # after real removal.
+    list_result = container_exec(
+        container_name,
+        base_cmd + ["-print"],
+        user=constants.CONTAINER_USER,
+        check=False,
+    )
+    matches = [line for line in list_result.stdout.splitlines() if line.strip()]
+
+    if not dry_run and matches:
+        container_exec(
+            container_name,
+            base_cmd + ["-exec", "rm", "-rf", "{}", "+"],
+            user=constants.CONTAINER_USER,
+            check=False,
+        )
+
+    return matches
+
+
+@app.command()
+def tidy(
+    name: str = typer.Argument(help="Name of the environment"),
+    paths: Optional[list[str]] = typer.Option(
+        None,
+        "--paths",
+        "-p",
+        help=(
+            "Directory names to remove, matched recursively. Default: "
+            ".mypy_cache, .pytest_cache, .ruff_cache, __pycache__"
+        ),
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="List matching directories without removing them"
+    ),
+) -> None:
+    """
+    Remove cache directories from the cage's working tree.
+
+    Default targets are Python's common cache dirs. Pass --paths to override
+    (repeatable). Matching is by directory basename at any depth.
+
+    Use --dry-run to see what would be removed first.
+    """
+    _require_docker()
+
+    if not env_exists(name):
+        rprint(f"[bold red]Error: Environment '{name}' not found.[/bold red]")
+        raise typer.Exit(1)
+
+    meta = load_meta(name)
+    target_paths = paths if paths else list(TIDY_DEFAULT_PATHS)
+
+    was_stopped = False
+    if not container_is_running(meta.container_name):
+        container_start(meta.container_name)
+        was_stopped = True
+
+    try:
+        matches = _tidy_impl(meta.container_name, target_paths, dry_run=dry_run)
+    finally:
+        if was_stopped:
+            container_stop(meta.container_name)
+
+    if not matches:
+        rprint(
+            f"[dim]No matching directories in cage '{name}' "
+            f"(looked for: {', '.join(target_paths)}).[/dim]"
+        )
+        return
+
+    verb = "Would remove" if dry_run else "Removed"
+    rprint(f"[bold green]{verb} {len(matches)} directory/directories:[/bold green]")
+    for m in matches:
+        rprint(f"  [dim]{m}[/dim]")
+
+
 def _collect_exclude_patterns(
     target: Path,
     protect: list[str] | None = None,
@@ -1289,6 +1411,11 @@ def export(
         "--include-cache",
         help="Include cache/build artifacts (__pycache__, .pytest_cache, etc.)",
     ),
+    no_tidy: bool = typer.Option(
+        False,
+        "--no-tidy",
+        help="Skip the automatic 'tc tidy' pass that removes cache dirs before export",
+    ),
 ) -> None:
     """
     Export work from container back to host clone.
@@ -1350,6 +1477,17 @@ def export(
     if not container_is_running(meta.container_name):
         container_start(meta.container_name)
         was_stopped = True
+
+    # Tidy cache dirs from the cage before the export rsync walks them.
+    # Respect --no-tidy and --include-cache (if the user wants caches, don't tidy).
+    if not no_tidy and not include_cache:
+        removed = _tidy_impl(meta.container_name, TIDY_DEFAULT_PATHS)
+        if removed:
+            rprint(
+                f"[dim]tc tidy: removed {len(removed)} cache "
+                f"director{'ies' if len(removed) > 1 else 'y'} "
+                f"from cage (pass --no-tidy to skip).[/dim]"
+            )
 
     for container_path, host_target, label in export_targets:
         if len(export_targets) > 1:
@@ -1532,6 +1670,11 @@ def diff(
         "--include-cache",
         help="Include cache/build artifacts (__pycache__, .pytest_cache, etc.)",
     ),
+    no_tidy: bool = typer.Option(
+        False,
+        "--no-tidy",
+        help="Skip the automatic 'tc tidy' pass before the diff is computed",
+    ),
 ) -> None:
     """
     Preview what 'tc export' would change (dry run).
@@ -1587,6 +1730,15 @@ def diff(
     if not container_is_running(meta.container_name):
         container_start(meta.container_name)
         was_stopped = True
+
+    if not no_tidy and not include_cache:
+        removed = _tidy_impl(meta.container_name, TIDY_DEFAULT_PATHS)
+        if removed:
+            rprint(
+                f"[dim]tc tidy: removed {len(removed)} cache "
+                f"director{'ies' if len(removed) > 1 else 'y'} "
+                f"from cage (pass --no-tidy to skip).[/dim]"
+            )
 
     try:
         for container_path, host_target, label in diff_targets:

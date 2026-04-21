@@ -2613,3 +2613,97 @@ class TestInboxCommand:
         )
         assert result.exit_code != 0
         assert "Invalid JSON" in result.output
+
+
+class TestTidyCommand:
+    def _setup(
+        self,
+        mocker,
+        mock_trusty_cage_dir,
+        found: list[str] | None = None,
+    ):
+        create_meta(name="myenv", repo_url="https://a.com/r", auth_mode="api_key")
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+        found = found if found is not None else []
+        exec_mock = mocker.patch(
+            f"{CLI}.container_exec",
+            return_value=subprocess.CompletedProcess(
+                [], 0, stdout="\n".join(found) + ("\n" if found else ""), stderr=""
+            ),
+        )
+        return exec_mock
+
+    def test_fails_when_env_not_found(self, mocker, mock_trusty_cage_dir):
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        result = runner.invoke(app, ["tidy", "nonexistent"])
+        assert result.exit_code != 0
+
+    def test_default_paths_invoked(self, mocker, mock_trusty_cage_dir):
+        exec_mock = self._setup(
+            mocker,
+            mock_trusty_cage_dir,
+            found=["/home/trustycage/project/.mypy_cache"],
+        )
+        result = runner.invoke(app, ["tidy", "myenv"])
+        assert result.exit_code == 0, result.output
+        listing_call = exec_mock.call_args_list[0]
+        cmd = listing_call.args[1]
+        for p in [".mypy_cache", ".pytest_cache", ".ruff_cache", "__pycache__"]:
+            assert p in cmd
+        assert "Removed" in result.output
+        assert ".mypy_cache" in result.output
+
+    def test_custom_paths_override_defaults(self, mocker, mock_trusty_cage_dir):
+        exec_mock = self._setup(mocker, mock_trusty_cage_dir)
+        result = runner.invoke(
+            app, ["tidy", "myenv", "--paths", "dist", "--paths", "build"]
+        )
+        assert result.exit_code == 0
+        cmd = exec_mock.call_args_list[0].args[1]
+        assert "dist" in cmd
+        assert "build" in cmd
+        assert ".mypy_cache" not in cmd
+
+    def test_dry_run_does_not_call_rm(self, mocker, mock_trusty_cage_dir):
+        exec_mock = self._setup(
+            mocker, mock_trusty_cage_dir, found=["/home/trustycage/project/.ruff_cache"]
+        )
+        result = runner.invoke(app, ["tidy", "myenv", "--dry-run"])
+        assert result.exit_code == 0
+        assert "Would remove" in result.output
+        assert exec_mock.call_count == 1
+
+    def test_no_matches_prints_dim_message(self, mocker, mock_trusty_cage_dir):
+        self._setup(mocker, mock_trusty_cage_dir, found=[])
+        result = runner.invoke(app, ["tidy", "myenv"])
+        assert result.exit_code == 0
+        assert "No matching" in result.output
+
+
+class TestExportTidyIntegration:
+    def _common(self, mocker):
+        create_meta(name="myenv", repo_url="https://a.com/r", auth_mode="api_key")
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+        mocker.patch(f"{CLI}.copy_from_container")
+        mocker.patch(f"{CLI}.subprocess.run")
+        return mocker.patch(f"{CLI}._tidy_impl", return_value=[])
+
+    def test_export_auto_tidies_by_default(self, mocker, mock_trusty_cage_dir):
+        tidy_mock = self._common(mocker)
+        result = runner.invoke(app, ["export", "myenv", "--yes"])
+        assert result.exit_code == 0
+        assert tidy_mock.called
+
+    def test_export_no_tidy_skips_tidy(self, mocker, mock_trusty_cage_dir):
+        tidy_mock = self._common(mocker)
+        result = runner.invoke(app, ["export", "myenv", "--yes", "--no-tidy"])
+        assert result.exit_code == 0
+        assert not tidy_mock.called
+
+    def test_export_include_cache_skips_tidy(self, mocker, mock_trusty_cage_dir):
+        tidy_mock = self._common(mocker)
+        result = runner.invoke(app, ["export", "myenv", "--yes", "--include-cache"])
+        assert result.exit_code == 0
+        assert not tidy_mock.called
