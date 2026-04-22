@@ -130,12 +130,21 @@ Terminal testing catches issues that unit tests with mocked Docker calls miss (a
 - Merges to `main` are done via PR on GitHub — never merge locally
 - Push the feature branch and open a PR
 - **Before opening a PR, update `CHANGELOG.md`** with an entry for the change (under the upcoming release, or a new version heading if cutting a release). User-facing changes must appear in the changelog.
-- **Before opening a PR, run the `readme-audit` skill** to confirm `README.md` still matches the surface (CLI commands, flags, behavior) the PR touches. Fix anything drifted in the same PR. For trivial PRs (tests-only, docs-only, internal refactor) a one-line "readme-audit: no user-visible surface changed" in the PR description is enough.
+- **Before opening a PR, suggest running the `readme-audit` skill** when the change touches user-visible surface (CLI commands, flags, observable behavior). This is a *suggestion* I make to the user — not an automatic run. The user decides whether to run it. For trivial PRs (tests-only, docs-only, internal refactor), note "readme-audit: no user-visible surface changed" in the PR description and skip.
 
 ## Release Workflow
 
 - Always merge to `main` via PR **before** publishing to PyPI
 - Never publish to PyPI from an unmerged branch
+
+### Pre-release gate (non-negotiable)
+
+Before **any** release (`make publish`, `make tag`, version bump PR), **both** of these skills MUST be run:
+
+1. **`readme-audit`** — verify `README.md` is comprehensive and covers everything shipped in this release. No gaps, no stale examples, no missing flags. Fix issues in the release PR itself.
+2. **`code-review`** — full security + quality sweep across all changes since the last release. Address every security concern before the code goes public.
+
+These are hard requirements, not suggestions. If either skill turns up unresolved issues, the release is blocked until they're fixed. Don't skip, defer, or downgrade them — the point is that anything published to PyPI has cleared both gates.
 
 ## Versioning
 
