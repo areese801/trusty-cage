@@ -34,3 +34,10 @@ trusty-cage:*/
 # trusty-cage working files
 TODO.md
 docs/superpowers/
+
+# Session working notes (iteration plans, social-media drafts)
+docs/cage-iterate-*.md
+docs/linkedin-post-*.md
+
+# Claude Code skill artifacts (code-review feedback, etc.)
+.agent/

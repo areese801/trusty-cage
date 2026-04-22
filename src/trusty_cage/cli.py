@@ -60,6 +60,7 @@ from trusty_cage.environment import (
     load_meta,
     save_meta,
 )
+from trusty_cage import ignore
 from trusty_cage.image import build_if_needed, rebuild, resolve_dockerfile
 from trusty_cage.messaging import (
     init_messaging_dirs,
@@ -254,16 +255,18 @@ def create(
         rprint(f"[bold red]Error: Environment '{env_name}' already exists.[/bold red]")
         raise typer.Exit(1)
 
-    # Clean up ALL orphaned artifacts from a previous destroy.
-    # tc destroy removes container + volume + meta.json but preserves the host
-    # clone directory (so the user can grab exported work). If they then re-create
-    # with the same name, we must wipe the stale env dir — otherwise the old host
-    # clone files get copied into the fresh cage, producing "ghost work".
+    # Clean up orphaned artifacts before creating a fresh env. Since 0.10.0,
+    # `tc destroy` purges ~/.trusty-cage/envs/<name>/ by default, so this
+    # normally only fires when the user passed --keep-host-clone on a prior
+    # destroy, or when a previous `tc create` was interrupted mid-setup.
+    # Either way, wiping is safe: the host clone is either intentionally
+    # preserved (and the user can re-grab it) or partial state from a
+    # failed run.
     env_dir = get_env_dir(env_name)
     if env_dir.exists():
         rprint(
-            "[bold yellow]Warning: Cleaning up stale environment directory "
-            "from a previous session.[/bold yellow]"
+            "[yellow]Removing preserved env directory from a prior run "
+            "(`tc destroy --keep-host-clone` or interrupted `tc create`).[/yellow]"
         )
         shutil.rmtree(env_dir)
     expected_container = f"{constants.CONTAINER_PREFIX}{env_name}"
@@ -1101,15 +1104,139 @@ def remove_dir(
     rprint(f"[bold green]Removed '{dir_name}' from cage '{name}'.[/bold green]")
 
 
-_CACHE_EXCLUDE_PATTERNS = [
-    "__pycache__/",
-    "*.py[cod]",
-    ".pytest_cache/",
-    ".ruff_cache/",
-    ".mypy_cache/",
-    ".DS_Store",
-    "node_modules/",
+# Directory names that `tc tidy` removes by default. Intentionally a subset
+# of ignore.DEFAULT_CACHE_PATTERNS: we only rm -rf directory-style entries,
+# not file globs like "*.py[cod]".
+TIDY_DEFAULT_PATHS: list[str] = [
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    "__pycache__",
 ]
+
+
+def _tidy_impl(
+    container_name: str,
+    paths: list[str],
+    dry_run: bool = False,
+) -> list[str]:
+    """
+    Remove (or preview removal of) directories named in `paths` from the
+    cage's project directory, searched recursively. Returns the list of
+    directory paths that matched (for display to the caller).
+
+    Uses a single `find ... -depth -type d \\( -name X -o -name Y \\)` invocation
+    and runs `rm -rf` only when `dry_run` is False.
+    """
+    if not paths:
+        return []
+
+    name_clauses: list[str] = []
+    for i, p in enumerate(paths):
+        if i:
+            name_clauses.append("-o")
+        name_clauses.extend(["-name", p])
+
+    base_cmd = [
+        "find",
+        constants.CONTAINER_PROJECT_DIR,
+        "-depth",
+        "-type",
+        "d",
+        "(",
+        *name_clauses,
+        ")",
+    ]
+
+    # Always print matches — we surface them in dry-run and as a count
+    # after real removal.
+    list_result = container_exec(
+        container_name,
+        base_cmd + ["-print"],
+        user=constants.CONTAINER_USER,
+        check=False,
+    )
+    matches = [line for line in list_result.stdout.splitlines() if line.strip()]
+
+    if not dry_run and matches:
+        container_exec(
+            container_name,
+            base_cmd + ["-exec", "rm", "-rf", "{}", "+"],
+            user=constants.CONTAINER_USER,
+            check=False,
+        )
+
+    return matches
+
+
+@app.command()
+def tidy(
+    name: str = typer.Argument(help="Name of the environment"),
+    paths: Optional[list[str]] = typer.Option(
+        None,
+        "--paths",
+        "-p",
+        help=(
+            "Directory names to remove, matched recursively. Default: "
+            ".mypy_cache, .pytest_cache, .ruff_cache, __pycache__"
+        ),
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="List matching directories without removing them"
+    ),
+) -> None:
+    """
+    Remove cache directories from the cage's working tree.
+
+    Default targets are Python's common cache dirs. Pass --paths to override
+    (repeatable). Matching is by directory basename at any depth.
+
+    Use --dry-run to see what would be removed first.
+    """
+    _require_docker()
+
+    if not env_exists(name):
+        rprint(f"[bold red]Error: Environment '{name}' not found.[/bold red]")
+        raise typer.Exit(1)
+
+    meta = load_meta(name)
+    target_paths = paths if paths else list(TIDY_DEFAULT_PATHS)
+
+    # Guard: --paths values are fed to `find -name`, which treats them as
+    # shell glob patterns. A reckless or typo'd `--paths '*'` would match
+    # every directory under the project root and `rm -rf` each one. Reject
+    # anything that isn't a literal directory basename.
+    for p in target_paths:
+        if not p or "/" in p or any(c in p for c in "*?[]"):
+            rprint(
+                f"[bold red]Error: --paths value {p!r} is not a valid "
+                "directory basename. Must be a literal name with no "
+                "wildcards or path separators.[/bold red]"
+            )
+            raise typer.Exit(1)
+
+    was_stopped = False
+    if not container_is_running(meta.container_name):
+        container_start(meta.container_name)
+        was_stopped = True
+
+    try:
+        matches = _tidy_impl(meta.container_name, target_paths, dry_run=dry_run)
+    finally:
+        if was_stopped:
+            container_stop(meta.container_name)
+
+    if not matches:
+        rprint(
+            f"[dim]No matching directories in cage '{name}' "
+            f"(looked for: {', '.join(target_paths)}).[/dim]"
+        )
+        return
+
+    verb = "Would remove" if dry_run else "Removed"
+    rprint(f"[bold green]{verb} {len(matches)} directory/directories:[/bold green]")
+    for m in matches:
+        rprint(f"  [dim]{m}[/dim]")
 
 
 def _collect_exclude_patterns(
@@ -1118,46 +1245,20 @@ def _collect_exclude_patterns(
     include_cache: bool = False,
 ) -> list[str]:
     """
-    Build a deduplicated list of rsync --exclude patterns from .git/,
-    .cageprotect, venv/, and explicit --protect globs. Also reads patterns
-    from the target's .gitignore and .cageprotect files.
+    Build a deduplicated list of rsync --exclude patterns.
 
-    By default, common build/cache artifacts are excluded. Pass
-    include_cache=True to transfer them.
+    Thin wrapper over ``ignore.build_rsync_exclude_patterns`` — kept as a
+    local name so existing callers (export/diff/sync) don't need to change.
 
     Note: .gitignore itself is NOT excluded — cage-side changes to .gitignore
     will transfer to the host. Users who want to preserve the host's .gitignore
     should list it in .cageprotect.
     """
-    seen: set[str] = set()
-    patterns: list[str] = []
-
-    def _add(pat: str) -> None:
-        if pat not in seen:
-            seen.add(pat)
-            patterns.append(pat)
-
-    _add(".git/")
-    _add(".cageprotect")
-    _add("venv/")
-    _add(".venv/")
-
-    if not include_cache:
-        for pat in _CACHE_EXCLUDE_PATTERNS:
-            _add(pat)
-
-    for filename in (".gitignore", ".cageprotect"):
-        path = target / filename
-        if path.is_file():
-            for line in path.read_text().splitlines():
-                line = line.strip()
-                if line and not line.startswith("#"):
-                    _add(line)
-
-    for pat in protect or []:
-        _add(pat)
-
-    return patterns
+    return ignore.build_rsync_exclude_patterns(
+        target,
+        extra=protect or [],
+        include_cache=include_cache,
+    )
 
 
 def _backup_gitignore_if_changed(host_target: Path, export_dir: Path) -> None:
@@ -1289,6 +1390,11 @@ def export(
         "--include-cache",
         help="Include cache/build artifacts (__pycache__, .pytest_cache, etc.)",
     ),
+    no_tidy: bool = typer.Option(
+        False,
+        "--no-tidy",
+        help="Skip the automatic 'tc tidy' pass that removes cache dirs before export",
+    ),
 ) -> None:
     """
     Export work from container back to host clone.
@@ -1350,6 +1456,17 @@ def export(
     if not container_is_running(meta.container_name):
         container_start(meta.container_name)
         was_stopped = True
+
+    # Tidy cache dirs from the cage before the export rsync walks them.
+    # Respect --no-tidy and --include-cache (if the user wants caches, don't tidy).
+    if not no_tidy and not include_cache:
+        removed = _tidy_impl(meta.container_name, TIDY_DEFAULT_PATHS)
+        if removed:
+            rprint(
+                f"[dim]tc tidy: removed {len(removed)} cache "
+                f"director{'ies' if len(removed) > 1 else 'y'} "
+                f"from cage (pass --no-tidy to skip).[/dim]"
+            )
 
     for container_path, host_target, label in export_targets:
         if len(export_targets) > 1:
@@ -1532,6 +1649,11 @@ def diff(
         "--include-cache",
         help="Include cache/build artifacts (__pycache__, .pytest_cache, etc.)",
     ),
+    no_tidy: bool = typer.Option(
+        False,
+        "--no-tidy",
+        help="Skip the automatic 'tc tidy' pass before the diff is computed",
+    ),
 ) -> None:
     """
     Preview what 'tc export' would change (dry run).
@@ -1588,6 +1710,15 @@ def diff(
         container_start(meta.container_name)
         was_stopped = True
 
+    if not no_tidy and not include_cache:
+        removed = _tidy_impl(meta.container_name, TIDY_DEFAULT_PATHS)
+        if removed:
+            rprint(
+                f"[dim]tc tidy: removed {len(removed)} cache "
+                f"director{'ies' if len(removed) > 1 else 'y'} "
+                f"from cage (pass --no-tidy to skip).[/dim]"
+            )
+
     try:
         for container_path, host_target, label in diff_targets:
             if len(diff_targets) > 1:
@@ -1602,6 +1733,164 @@ def diff(
                 delete,
                 include_cache,
             )
+    finally:
+        if was_stopped:
+            container_stop(meta.container_name)
+
+
+@app.command()
+def patch(
+    name: str = typer.Argument(help="Name of the environment"),
+    base: str = typer.Option(
+        "main", "--base", help="Base ref to diff cage commits against"
+    ),
+    output_dir: Optional[str] = typer.Option(
+        None,
+        "--output-dir",
+        "-o",
+        help="Write patch files here (default: ./.trusty-cage-patches/<name>/)",
+    ),
+    stdout: bool = typer.Option(
+        False,
+        "--stdout",
+        help="Stream combined patch to stdout instead of writing files",
+    ),
+) -> None:
+    """
+    Emit git-format-patch output for the cage's commits ahead of <base>.
+
+    Default: writes one patch file per commit to ./.trusty-cage-patches/<name>/.
+    Apply via: git am .trusty-cage-patches/<name>/*.patch
+
+    With --stdout, streams a single combined patch. Apply via:
+      tc patch <name> --stdout | git am
+
+    This avoids the working-tree noise (cache dirs, install side-effects)
+    that tc export's rsync would otherwise bring along.
+    """
+    _require_docker()
+
+    if not env_exists(name):
+        rprint(f"[bold red]Error: Environment '{name}' not found.[/bold red]")
+        raise typer.Exit(1)
+
+    if stdout and output_dir is not None:
+        rprint(
+            "[bold red]Error: --stdout and --output-dir are mutually exclusive."
+            "[/bold red]"
+        )
+        raise typer.Exit(1)
+
+    meta = load_meta(name)
+
+    was_stopped = False
+    if not container_is_running(meta.container_name):
+        container_start(meta.container_name)
+        was_stopped = True
+
+    try:
+        # Verify base ref exists in cage
+        verify = container_exec(
+            meta.container_name,
+            [
+                "git",
+                "-C",
+                constants.CONTAINER_PROJECT_DIR,
+                "rev-parse",
+                "--verify",
+                f"{base}^{{commit}}",
+            ],
+            user=constants.CONTAINER_USER,
+            check=False,
+        )
+        if verify.returncode != 0:
+            rprint(f"[bold red]Error: base ref '{base}' not found in cage.[/bold red]")
+            if verify.stderr:
+                rprint(f"[dim]{verify.stderr.strip()}[/dim]")
+            raise typer.Exit(1)
+
+        # Count commits ahead of base
+        count_result = container_exec(
+            meta.container_name,
+            [
+                "git",
+                "-C",
+                constants.CONTAINER_PROJECT_DIR,
+                "rev-list",
+                "--count",
+                f"{base}..HEAD",
+            ],
+            user=constants.CONTAINER_USER,
+            check=False,
+        )
+        try:
+            n_commits = int(count_result.stdout.strip() or "0")
+        except ValueError:
+            n_commits = 0
+
+        if n_commits == 0:
+            rprint(f"[dim]No commits ahead of '{base}'. Nothing to patch.[/dim]")
+            return
+
+        if stdout:
+            result = container_exec(
+                meta.container_name,
+                [
+                    "git",
+                    "-C",
+                    constants.CONTAINER_PROJECT_DIR,
+                    "format-patch",
+                    "--stdout",
+                    base,
+                ],
+                user=constants.CONTAINER_USER,
+                check=True,
+            )
+            # Plain print so rich doesn't reformat the patch
+            print(result.stdout, end="")
+            return
+
+        # Resolve output directory
+        if output_dir is None:
+            output_path = Path.cwd() / ".trusty-cage-patches" / name
+        else:
+            output_path = Path(output_dir).resolve()
+
+        # Cage-side temp dir (random suffix avoids collisions across invocations)
+        cage_tmp = f"/tmp/tc-patches-{os.urandom(4).hex()}"
+        try:
+            container_exec(
+                meta.container_name,
+                [
+                    "git",
+                    "-C",
+                    constants.CONTAINER_PROJECT_DIR,
+                    "format-patch",
+                    base,
+                    "-o",
+                    cage_tmp,
+                ],
+                user=constants.CONTAINER_USER,
+                check=True,
+            )
+            output_path.mkdir(parents=True, exist_ok=True)
+            copy_from_container(
+                meta.container_name,
+                cage_tmp + "/.",
+                str(output_path),
+            )
+        finally:
+            container_exec(
+                meta.container_name,
+                ["rm", "-rf", cage_tmp],
+                user=constants.CONTAINER_USER,
+                check=False,
+            )
+
+        rprint(
+            f"[bold green]Wrote {n_commits} patch file(s) to {output_path}[/bold green]"
+        )
+        rprint(f"[dim]Apply with: git am {output_path}/*.patch[/dim]")
     finally:
         if was_stopped:
             container_stop(meta.container_name)
@@ -2471,6 +2760,37 @@ def salvage(
     )
 
 
+OUTBOX_POLL_IDLE_THRESHOLD = 3
+OUTBOX_POLL_GROWTH_FACTOR = 1.5
+
+
+def _next_poll_interval(
+    current: float,
+    idle_polls: int,
+    base_interval: float,
+    max_interval: float,
+    idle_threshold: int = OUTBOX_POLL_IDLE_THRESHOLD,
+    growth_factor: float = OUTBOX_POLL_GROWTH_FACTOR,
+) -> float:
+    """
+    Compute the next poll interval for the outbox adaptive-polling loop.
+
+    - If new messages arrived this cycle (idle_polls == 0), reset to
+      base_interval — the inner agent is actively producing output.
+    - Otherwise, once idle_polls crosses idle_threshold, grow the interval
+      geometrically (current * growth_factor) up to max_interval.
+    - Below the threshold the interval stays where it is.
+
+    Result is always clamped to [base_interval, max_interval].
+    """
+    if idle_polls == 0:
+        return base_interval
+    if idle_polls < idle_threshold:
+        return max(min(current, max_interval), base_interval)
+    grown = current * growth_factor
+    return max(min(grown, max_interval), base_interval)
+
+
 @app.command("outbox")
 def outbox_read(
     name: str = typer.Argument(help="Name of the environment"),
@@ -2487,7 +2807,22 @@ def outbox_read(
         1800, "--timeout", help="Poll timeout in seconds (default: 1800 = 30m)"
     ),
     interval: int = typer.Option(
-        30, "--interval", help="Poll interval in seconds (default: 30)"
+        30,
+        "--interval",
+        help=(
+            "Base poll interval in seconds (default: 30). Acts as the floor; "
+            "the actual interval grows adaptively after idle polls."
+        ),
+    ),
+    max_interval: int = typer.Option(
+        300,
+        "--max-interval",
+        help=(
+            "Upper bound the poll interval can grow to after consecutive "
+            f"idle polls (default: 300). After {OUTBOX_POLL_IDLE_THRESHOLD} idle "
+            f"polls the interval starts growing by {OUTBOX_POLL_GROWTH_FACTOR}x per "
+            "cycle; resets to --interval on any new message."
+        ),
     ),
     no_diagnose: bool = typer.Option(
         False,
@@ -2501,8 +2836,17 @@ def outbox_read(
     meta = _require_env_running(name)
 
     if poll:
+        if max_interval < interval:
+            rprint(
+                f"[bold red]Error: --max-interval ({max_interval}) must be >= "
+                f"--interval ({interval}).[/bold red]"
+            )
+            raise typer.Exit(1)
+
         rprint(f"[dim]Polling outbox for task_complete (timeout: {timeout}s)...[/dim]")
         start = time.time()
+        current_interval = float(interval)
+        idle_polls = 0
         while True:
             messages = read_outbox(meta.container_name, since_cursor=True)
             for msg in messages:
@@ -2544,6 +2888,9 @@ def outbox_read(
 
             if messages:
                 set_cursor(meta.container_name, messages[-1].timestamp)
+                idle_polls = 0
+            else:
+                idle_polls += 1
 
             elapsed = time.time() - start
             if elapsed >= timeout:
@@ -2555,7 +2902,10 @@ def outbox_read(
                         rprint(line)
                 raise typer.Exit(1)
 
-            time.sleep(interval)
+            current_interval = _next_poll_interval(
+                current_interval, idle_polls, float(interval), float(max_interval)
+            )
+            time.sleep(current_interval)
         return
 
     messages = read_outbox(meta.container_name, since_cursor=not all_messages)
