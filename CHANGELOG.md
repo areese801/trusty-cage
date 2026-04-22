@@ -6,6 +6,15 @@ This project follows [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PA
 
 ---
 
+## [0.13.1] - 2026-04-22
+
+### Fixed
+- **Install no longer prints `typer 0.x does not provide the extra 'all'` warning.** Dropped the `[all]` extras form from `typer` in `pyproject.toml` — modern typer versions (0.13+) don't ship that extras group, and we don't need it. Cosmetic-only; no runtime behavior change.
+- **Five pre-existing mypy type-safety gaps resolved** via invariant-asserting `assert` statements: `prompt_text is not None` in `tc launch`, `proc.stdout is not None` in `tc logs` (two sites where we already pass `stdout=PIPE`), `payload_json is not None` in `tc inbox`, and a missing `list[MetaJson]` annotation in `environment.list_envs`. No runtime behavior change — the asserts formalize invariants the surrounding control flow already enforced.
+
+### Changed
+- **Sdist no longer ships session-local files.** Added a `[tool.hatch.build.targets.sdist] exclude` stanza covering `.claude/`, `.agent/`, `TODO.md`, `set_creds.sh`, `docs/cage-iterate-*.md`, `docs/linkedin-post-*.md`, and `.images/`. Fixes 0.13.0's sdist inadvertently bundling `.claude/settings.local.json` with user-specific absolute paths. Wheels were already clean.
+
 ## [0.13.0] - 2026-04-21
 
 ### Added

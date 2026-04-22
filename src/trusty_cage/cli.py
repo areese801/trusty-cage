@@ -2351,6 +2351,11 @@ def launch(
         messaging_text = assets.joinpath("messaging-instructions.md").read_text()
         prompt_text = prompt_text + "\n\n" + messaging_text
 
+    # By this point either --prompt or --prompt-file was set (the
+    # modes-count check at the top of the function enforces it, and
+    # --test returns before here), so prompt_text must be a str.
+    assert prompt_text is not None
+
     stream_log = f"{constants.CAGE_MSG_DIR}/claude-stream.log"
     claude_cmd = [
         "bash",
@@ -2533,6 +2538,8 @@ def logs(
                     stdout=subprocess.PIPE,
                     text=True,
                 )
+                # stdout=PIPE guarantees proc.stdout is not None.
+                assert proc.stdout is not None
                 try:
                     _pretty_stream(proc.stdout)
                 finally:
@@ -2594,6 +2601,8 @@ def logs(
                 stdout=subprocess.PIPE,
                 text=True,
             )
+            # stdout=PIPE guarantees proc.stdout is not None.
+            assert proc.stdout is not None
             try:
                 _pretty_stream(proc.stdout)
             finally:
@@ -2968,6 +2977,10 @@ def inbox_send(
             raise typer.Exit(1)
         payload = {"instructions": file_path.read_text()}
     else:
+        # The guard at the top ("not payload_json and not payload_file")
+        # ensures one is set; this branch's condition (not payload_file)
+        # means payload_json is the non-None one.
+        assert payload_json is not None
         try:
             payload = json.loads(payload_json)
         except json.JSONDecodeError as e:
