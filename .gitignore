@@ -20,8 +20,10 @@ set_creds.sh
 # OS
 .DS_Store
 
-# pytest
+# pytest / coverage
 .pytest_cache/
+.coverage
+.coverage.*
 
 # Ruff
 .ruff_cache/

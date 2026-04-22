@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "trusty-cage"
-version = "0.13.0"
+version = "0.13.1"
 description = "Isolated Docker-based development environments for AI coding agents"
 readme = "README.md"
 license = "MIT"
@@ -26,7 +26,7 @@ classifiers = [
     "Topic :: Software Development",
 ]
 dependencies = [
-    "typer[all]>=0.12",
+    "typer>=0.12",
     "python-dotenv>=1.0",
     "pathspec>=0.12",
 ]
@@ -51,6 +51,22 @@ tc = "trusty_cage.cli:app"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/trusty_cage"]
+
+[tool.hatch.build.targets.sdist]
+# Exclude session-local / working files that aren't meant to ship to PyPI.
+# Without this, the sdist picked up .claude/settings.local.json (with
+# user-specific absolute paths) during 0.13.0.
+exclude = [
+    ".claude/",
+    ".agent/",
+    ".coverage",
+    ".coverage.*",
+    "TODO.md",
+    "set_creds.sh",
+    "docs/cage-iterate-*.md",
+    "docs/linkedin-post-*.md",
+    ".images/",
+]
 
 [tool.ruff]
 line-length = 88

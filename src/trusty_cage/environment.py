@@ -160,7 +160,7 @@ def list_envs() -> list[MetaJson]:
     """
     List all environments that have a valid meta.json.
     """
-    envs = []
+    envs: list[MetaJson] = []
     if not constants.ENVS_DIR.is_dir():
         return envs
     for entry in sorted(constants.ENVS_DIR.iterdir()):
