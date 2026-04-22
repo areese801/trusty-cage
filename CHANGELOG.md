@@ -6,6 +6,11 @@ This project follows [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PA
 
 ---
 
+## [0.13.0] - TBD
+
+### Changed
+- **`tc outbox --poll` now uses adaptive polling.** After 3 consecutive idle polls (no new messages), the interval grows by 1.5× per cycle up to `--max-interval` (new flag, default 300s). Any new message resets the interval back to `--interval` (the floor). For long-running cages that emit infrequent progress updates this cuts unnecessary docker-exec polling without sacrificing responsiveness when the inner agent is actively producing output. Short fast-iterating cages see no change because they never cross the 3-idle-poll threshold.
+
 ## [0.12.0] - 2026-04-19
 
 ### Added

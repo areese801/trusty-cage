@@ -2613,3 +2613,67 @@ class TestInboxCommand:
         )
         assert result.exit_code != 0
         assert "Invalid JSON" in result.output
+
+
+class TestAdaptivePollInterval:
+    def test_reset_on_messages(self):
+        from trusty_cage.cli import _next_poll_interval
+
+        # idle_polls=0 means messages just arrived — snap back to base
+        assert _next_poll_interval(200.0, 0, 30.0, 300.0) == 30.0
+
+    def test_below_threshold_holds(self):
+        from trusty_cage.cli import _next_poll_interval
+
+        assert _next_poll_interval(30.0, 1, 30.0, 300.0) == 30.0
+        assert _next_poll_interval(30.0, 2, 30.0, 300.0) == 30.0
+
+    def test_grows_at_threshold(self):
+        from trusty_cage.cli import _next_poll_interval
+
+        # At threshold (3): 30 * 1.5 = 45
+        assert _next_poll_interval(30.0, 3, 30.0, 300.0) == 45.0
+
+    def test_continues_growing(self):
+        from trusty_cage.cli import _next_poll_interval
+
+        assert _next_poll_interval(45.0, 4, 30.0, 300.0) == 67.5
+        assert _next_poll_interval(67.5, 5, 30.0, 300.0) == 101.25
+
+    def test_clamps_to_max(self):
+        from trusty_cage.cli import _next_poll_interval
+
+        # 250 * 1.5 = 375 → clamped to 300
+        assert _next_poll_interval(250.0, 5, 30.0, 300.0) == 300.0
+        # At max already — stays at max
+        assert _next_poll_interval(300.0, 6, 30.0, 300.0) == 300.0
+
+    def test_never_below_base(self):
+        from trusty_cage.cli import _next_poll_interval
+
+        # Defensive: if current somehow drifts below base, floor to base
+        assert _next_poll_interval(10.0, 1, 30.0, 300.0) == 30.0
+
+    def test_rejects_bad_max_interval(self, mocker, mock_trusty_cage_dir):
+        create_meta(name="myenv", repo_url="https://a.com/r", auth_mode="api_key")
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_exists", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+
+        result = runner.invoke(
+            app,
+            [
+                "outbox",
+                "myenv",
+                "--poll",
+                "--interval",
+                "60",
+                "--max-interval",
+                "30",
+                "--timeout",
+                "1",
+            ],
+        )
+        assert result.exit_code != 0
+        assert "--max-interval" in result.output
+        assert "--interval" in result.output

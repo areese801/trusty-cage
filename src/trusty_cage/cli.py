@@ -2471,6 +2471,37 @@ def salvage(
     )
 
 
+OUTBOX_POLL_IDLE_THRESHOLD = 3
+OUTBOX_POLL_GROWTH_FACTOR = 1.5
+
+
+def _next_poll_interval(
+    current: float,
+    idle_polls: int,
+    base_interval: float,
+    max_interval: float,
+    idle_threshold: int = OUTBOX_POLL_IDLE_THRESHOLD,
+    growth_factor: float = OUTBOX_POLL_GROWTH_FACTOR,
+) -> float:
+    """
+    Compute the next poll interval for the outbox adaptive-polling loop.
+
+    - If new messages arrived this cycle (idle_polls == 0), reset to
+      base_interval — the inner agent is actively producing output.
+    - Otherwise, once idle_polls crosses idle_threshold, grow the interval
+      geometrically (current * growth_factor) up to max_interval.
+    - Below the threshold the interval stays where it is.
+
+    Result is always clamped to [base_interval, max_interval].
+    """
+    if idle_polls == 0:
+        return base_interval
+    if idle_polls < idle_threshold:
+        return max(min(current, max_interval), base_interval)
+    grown = current * growth_factor
+    return max(min(grown, max_interval), base_interval)
+
+
 @app.command("outbox")
 def outbox_read(
     name: str = typer.Argument(help="Name of the environment"),
@@ -2487,7 +2518,22 @@ def outbox_read(
         1800, "--timeout", help="Poll timeout in seconds (default: 1800 = 30m)"
     ),
     interval: int = typer.Option(
-        30, "--interval", help="Poll interval in seconds (default: 30)"
+        30,
+        "--interval",
+        help=(
+            "Base poll interval in seconds (default: 30). Acts as the floor; "
+            "the actual interval grows adaptively after idle polls."
+        ),
+    ),
+    max_interval: int = typer.Option(
+        300,
+        "--max-interval",
+        help=(
+            "Upper bound the poll interval can grow to after consecutive "
+            f"idle polls (default: 300). After {OUTBOX_POLL_IDLE_THRESHOLD} idle "
+            f"polls the interval starts growing by {OUTBOX_POLL_GROWTH_FACTOR}x per "
+            "cycle; resets to --interval on any new message."
+        ),
     ),
     no_diagnose: bool = typer.Option(
         False,
@@ -2501,8 +2547,17 @@ def outbox_read(
     meta = _require_env_running(name)
 
     if poll:
+        if max_interval < interval:
+            rprint(
+                f"[bold red]Error: --max-interval ({max_interval}) must be >= "
+                f"--interval ({interval}).[/bold red]"
+            )
+            raise typer.Exit(1)
+
         rprint(f"[dim]Polling outbox for task_complete (timeout: {timeout}s)...[/dim]")
         start = time.time()
+        current_interval = float(interval)
+        idle_polls = 0
         while True:
             messages = read_outbox(meta.container_name, since_cursor=True)
             for msg in messages:
@@ -2544,6 +2599,9 @@ def outbox_read(
 
             if messages:
                 set_cursor(meta.container_name, messages[-1].timestamp)
+                idle_polls = 0
+            else:
+                idle_polls += 1
 
             elapsed = time.time() - start
             if elapsed >= timeout:
@@ -2555,7 +2613,10 @@ def outbox_read(
                         rprint(line)
                 raise typer.Exit(1)
 
-            time.sleep(interval)
+            current_interval = _next_poll_interval(
+                current_interval, idle_polls, float(interval), float(max_interval)
+            )
+            time.sleep(current_interval)
         return
 
     messages = read_outbox(meta.container_name, since_cursor=not all_messages)
