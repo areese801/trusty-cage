@@ -6,6 +6,20 @@ This project follows [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PA
 
 ---
 
+## [0.13.0] - 2026-04-21
+
+### Added
+- **uv preinstalled in cage image.** `uv` (Astral's Python package manager) is now installed in the bundled Dockerfile at build time, and `/home/trustycage/.local/bin` is added to the image's global `ENV PATH` so `uv` works from any shell — including non-interactive `docker exec ... bash -c 'uv ...'` invocations, not just interactive zsh. Inner agents no longer need to `pip install uv` as their first setup step.
+- **`tc patch <env>` command.** Emits `git format-patch` output for the cage's commits ahead of a base ref (default `main`). Writes one patch file per commit to `./.trusty-cage-patches/<env>/` by default, or pass `--stdout` to stream a combined patch for `tc patch <env> --stdout | git am`. Avoids the working-tree noise (cache dirs, pip install side-effects) that `tc export`'s rsync would otherwise bring along — ideal for single-commit cages.
+- **`tc tidy <env>` command.** Removes cache directories (`.mypy_cache`, `.pytest_cache`, `.ruff_cache`, `__pycache__`) from the cage's project tree, recursively. Pass `--paths` to override the default list or `--dry-run` to preview what would be removed.
+- **New `trusty_cage.ignore` module.** Single source of truth for gitignore/cache pattern logic used by stats, rsync exclusion, and `tc tidy`. Adds `pathspec>=0.12` as a dependency.
+
+### Changed
+- **`tc create` rewords the stale-env-dir cleanup message.** Previously printed "Warning: Cleaning up stale environment directory from a previous session." Since 0.10.0's default-purge `tc destroy`, this cleanup now only fires when the user explicitly passed `--keep-host-clone` on a prior destroy or a prior `tc create` was interrupted — neither of which is really "stale". The new (non-warning) message reads: "Removing preserved env directory from a prior run (`tc destroy --keep-host-clone` or interrupted `tc create`)." The stale comment block above the code has been updated too.
+- **`tc diff --stats` and `tc export --stats` now honor `.gitignore`.** Previously the stats walked the working tree raw, inflating counts by megabytes of cache / build noise (e.g. `.mypy_cache/`, `.pytest_cache/`, `.ruff_cache/`) — on a real Kanberoo cage, a 21-file commit reported as "4,231 files / 959,711 lines". Stats now apply the union of both sides' `.gitignore` rules plus the trusty-cage default cache patterns before counting. Pass `--include-cache` (already supported by `tc export`/`tc diff`) to see raw numbers.
+- **`tc diff` and `tc export` auto-run `tc tidy` before their main work.** Silent unless cache dirs were actually found. Pass `--no-tidy` to skip, or `--include-cache` (already supported) to opt into keeping caches — both paths skip the tidy pass.
+- **`tc outbox --poll` now uses adaptive polling.** After 3 consecutive idle polls (no new messages), the interval grows by 1.5× per cycle up to `--max-interval` (new flag, default 300s). Any new message resets the interval back to `--interval` (the floor). For long-running cages that emit infrequent progress updates this cuts unnecessary docker-exec polling without sacrificing responsiveness when the inner agent is actively producing output. Short fast-iterating cages see no change because they never cross the 3-idle-poll threshold.
+
 ## [0.12.0] - 2026-04-19
 
 ### Added

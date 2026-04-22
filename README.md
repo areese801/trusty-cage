@@ -185,30 +185,32 @@ The name `project` is reserved for the main project directory.
 
 ## Commands
 
-| Command                                                                                               | Description                                                                   |
-| ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| `trusty-cage --version`                                                                               | Show version and exit                                                         |
-| `trusty-cage init [--force]`                                                                          | Create config directory and default `.env` file                               |
-| `trusty-cage create <url> [--name] [--no-attach] [--auth-mode] [--dockerfile] [--add-dir]`            | Create a new environment from a git repo                                      |
-| `trusty-cage create --dir <path> [--name] [--no-attach] [--auth-mode] [--dockerfile] [--add-dir]`     | Create from a local directory (no remote required)                            |
-| `trusty-cage attach <name>`                                                                           | Attach to an existing environment                                             |
-| `trusty-cage stop <name>`                                                                             | Stop a container (preserves work)                                             |
-| `trusty-cage list [--json]`                                                                           | List all environments with status and additional dirs                         |
-| `trusty-cage exists <name>`                                                                           | Check if an environment exists (exit code 0/1)                                |
-| `trusty-cage add-dir <name> <path> [--name]`                                                          | Add a local directory to an existing cage                                     |
-| `trusty-cage remove-dir <name> <dir-name> [-y/--yes]`                                                 | Remove an additional directory from a cage                                    |
-| `trusty-cage export <name> [-y/--yes] [--output-dir] [--delete] [--protect] [--dir] [--all]`          | Copy work back to host clone (safe default: no `--delete`)                    |
-| `trusty-cage diff <name> [--full] [--output-dir] [--dir] [--all]`                                     | Preview what `export` would change (dry run)                                  |
-| `trusty-cage sync <name> [--files] [-y/--yes] [--dir] [--all]`                                        | Push host files into a cage (inverse of export)                               |
-| `trusty-cage destroy <name> [-y/--yes] [--keep-host-clone]`                                           | Remove container, volumes, and host clone (pass `--keep-host-clone` to retain)|
-| `trusty-cage rebuild-image [--dockerfile]`                                                            | Force rebuild the Docker image                                                |
-| `trusty-cage auth <name> [--login]`                                                                   | Refresh or verify credentials for an environment                              |
-| `trusty-cage launch <name> -p/--prompt\|--prompt-file\|--test [--background] [--no-inject-messaging]` | Launch Claude Code inside a cage (messaging instructions injected by default) |
-| `trusty-cage logs [name] [-f] [-r/--raw] [-n/--lines N]`                                              | Stream inner Claude's reasoning (pretty-printed by default)                   |
-| `trusty-cage outbox <name> [-a/--all] [--json] [--poll] [--timeout] [--interval] [--no-diagnose]`     | Read messages from a cage's outbox (auto-diagnoses on poll timeout)           |
-| `trusty-cage inbox <name> <type> <payload_json>`                                                      | Send a message to a cage's inbox                                              |
-| `trusty-cage diagnose <name> [--json]`                                                                | Diagnostic sweep: inner process state, outbox, git, stream tail, suggestion   |
-| `trusty-cage salvage <name> [-y/--yes] [--output-dir]`                                                | Rescue work from a cage that didn't reach task_complete (diagnose + export)   |
+| Command                                                                                               | Description                                                                    |
+| ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `trusty-cage --version`                                                                               | Show version and exit                                                          |
+| `trusty-cage init [--force]`                                                                          | Create config directory and default `.env` file                                |
+| `trusty-cage create <url> [--name] [--no-attach] [--auth-mode] [--dockerfile] [--add-dir]`            | Create a new environment from a git repo                                       |
+| `trusty-cage create --dir <path> [--name] [--no-attach] [--auth-mode] [--dockerfile] [--add-dir]`     | Create from a local directory (no remote required)                             |
+| `trusty-cage attach <name>`                                                                           | Attach to an existing environment                                              |
+| `trusty-cage stop <name>`                                                                             | Stop a container (preserves work)                                              |
+| `trusty-cage list [--json]`                                                                           | List all environments with status and additional dirs                          |
+| `trusty-cage exists <name>`                                                                           | Check if an environment exists (exit code 0/1)                                 |
+| `trusty-cage add-dir <name> <path> [--name]`                                                          | Add a local directory to an existing cage                                      |
+| `trusty-cage remove-dir <name> <dir-name> [-y/--yes]`                                                 | Remove an additional directory from a cage                                     |
+| `trusty-cage export <name> [-y/--yes] [--output-dir] [--delete] [--protect] [--dir] [--all] [--stats] [--include-cache] [--no-tidy]` | Copy work back to host clone (safe default: no `--delete`) |
+| `trusty-cage diff <name> [--full] [--output-dir] [--dir] [--all] [--stats] [--delete] [--include-cache] [--no-tidy]` | Preview what `export` would change (dry run) |
+| `trusty-cage sync <name> [--files] [-y/--yes] [--dir] [--all] [--include-cache]`                      | Push host files into a cage (inverse of export)                                |
+| `trusty-cage patch <name> [--base] [--output-dir] [--stdout]`                                         | Emit `git format-patch` for cage commits ahead of base (alternative to export) |
+| `trusty-cage tidy <name> [--paths] [--dry-run]`                                                       | Remove cache directories (`.mypy_cache`, etc.) from the cage working tree      |
+| `trusty-cage destroy <name> [-y/--yes] [--keep-host-clone]`                                           | Remove container, volumes, and host clone (pass `--keep-host-clone` to retain) |
+| `trusty-cage rebuild-image [--dockerfile]`                                                            | Force rebuild the Docker image                                                 |
+| `trusty-cage auth <name> [--login]`                                                                   | Refresh or verify credentials for an environment                               |
+| `trusty-cage launch <name> -p/--prompt\|--prompt-file\|--test [--background] [--no-inject-messaging]` | Launch Claude Code inside a cage (messaging instructions injected by default)  |
+| `trusty-cage logs [name] [-f] [-r/--raw] [-n/--lines N]`                                              | Stream inner Claude's reasoning (pretty-printed by default)                    |
+| `trusty-cage outbox <name> [-a/--all] [--json] [--poll] [--timeout] [--interval] [--max-interval] [--no-diagnose]` | Read messages from a cage's outbox (adaptive polling, auto-diagnoses on timeout) |
+| `trusty-cage inbox <name> <type> <payload_json>`                                                      | Send a message to a cage's inbox                                               |
+| `trusty-cage diagnose <name> [--json]`                                                                | Diagnostic sweep: inner process state, outbox, git, stream tail, suggestion    |
+| `trusty-cage salvage <name> [-y/--yes] [--output-dir]`                                                | Rescue work from a cage that didn't reach task_complete (diagnose + export)    |
 
 ## Export, Diff, and Sync
 
@@ -244,7 +246,13 @@ secrets/
 
 **Hardcoded exclusions:** `.git/`, `.cageprotect`, `venv/`, and `.venv/` are always excluded, regardless of config.
 
+**Cache excludes (default):** `__pycache__/`, `*.py[cod]`, `.pytest_cache/`, `.ruff_cache/`, `.mypy_cache/`, `.DS_Store`, and `node_modules/` are excluded too. Pass `--include-cache` on `tc export` / `tc diff` / `tc sync` to transfer them anyway.
+
+**Auto-tidy before export / diff:** `tc diff` and `tc export` also run `tc tidy` against the cage before their main work — an extra belt-and-suspenders pass that physically removes the cache directories from the cage tree so they can't leak through. Silent unless matches exist. Pass `--no-tidy` to skip, or `--include-cache` (which also skips tidy since you've opted into keeping caches). You can also run `tc tidy <env>` manually at any time, optionally with `--dry-run` to preview or `--paths <name>` to override the default cache-dir list.
+
 **About `.gitignore`:** The cage's `.gitignore` file itself **does** transfer to the host during export — if an agent adds a new pattern to `.gitignore` inside the cage, that change reaches the host. If you want to protect the host's `.gitignore` from being overwritten, list it in `.cageprotect`.
+
+**`.gitignore.pre-export` backup:** When the cage's `.gitignore` differs from the host's, `tc export` writes the host's version to `.gitignore.pre-export` alongside it and prints a diff. This way you never silently lose a hand-tuned host `.gitignore` to a cage-side change — worst case you `mv .gitignore.pre-export .gitignore` to restore.
 
 ### Preview with `tc diff`
 
@@ -257,6 +265,55 @@ tc diff myenv --output-dir .           # compare against a specific directory
 tc diff myenv --dir shared-lib         # diff a specific additional dir
 tc diff myenv --all                    # diff main project + all additional dirs
 ```
+
+### Code Statistics
+
+Pass `--stats` to `tc export` or `tc diff` to see a per-language breakdown of lines added, removed, and modified:
+
+```bash
+tc diff myenv --stats
+tc export myenv -y --stats
+```
+
+Output looks like:
+
+```
+           Code Statistics
+┏━━━━━━━━━━━━┳━━━━━━━┳━━━━━━┳━━━━━━━━━┳━━━━━━━━━━┓
+┃ Language   ┃ Files ┃ Added┃ Removed ┃ Modified ┃
+┡━━━━━━━━━━━━╇━━━━━━━╇━━━━━━╇━━━━━━━━━╇━━━━━━━━━━┩
+│ Python     │     3 │ +142 │      -8 │      ~21 │
+│ Markdown   │     1 │  +12 │      -0 │       ~0 │
+├────────────┼───────┼──────┼─────────┼──────────┤
+│ Total      │     4 │ +154 │      -8 │      ~21 │
+└────────────┴───────┴──────┴─────────┴──────────┘
+(via cloc)
+```
+
+If [cloc](https://github.com/AlDanial/cloc) is installed on the host, stats are language-aware with a full added / removed / modified breakdown. Without cloc, trusty-cage falls back to a pure-Python line counter (added / removed only, detected by file extension). No extra dependencies either way.
+
+**Gitignored files are not counted.** Stats apply the union of both sides' `.gitignore` rules plus a default cache-pattern set (`.mypy_cache/`, `.pytest_cache/`, `.ruff_cache/`, `__pycache__/`, `.DS_Store`, `node_modules/`) before counting, so transient build noise doesn't inflate the numbers. Pass `--include-cache` to get raw numbers that count everything.
+
+### Export via git patches (`tc patch`)
+
+If the cage's deliverable is one or more clean commits (typical when the inner agent was told to commit its work), `tc patch` is an alternative to `tc export` that ships **only** the commits — no rsync of the working tree, no risk of dragging along cache dirs or `pip install` / `uv sync` side effects:
+
+```bash
+# Default: writes one patch file per commit ahead of `main`
+tc patch myenv
+git am ./.trusty-cage-patches/myenv/*.patch
+
+# Or stream a single combined patch to stdout
+tc patch myenv --stdout | git am
+
+# Against a non-`main` base
+tc patch myenv --base feature-branch
+
+# Custom output directory
+tc patch myenv --output-dir /tmp/cage-patches/
+```
+
+Use `tc export` when the cage has uncommitted / work-in-progress changes you want to stage yourself on the host. Use `tc patch` when the deliverable is already committed in the cage and you want only the commit contents — nothing else.
 
 ### Push fixes with `tc sync`
 
@@ -290,6 +347,7 @@ Configuration is resolved in order: CLI flags > environment variables > `~/.trus
 | `TRUSTY_CAGE_DEFAULT_SHELL`     | `zsh`     | Default shell inside the container                                                        |
 | `TRUSTY_CAGE_DEFAULT_AUTH_MODE` | `api_key` | Auth mode: `api_key` or `subscription`                                                    |
 | `TRUSTY_CAGE_TMUX_PREFIX`       | `C-a`     | tmux prefix key inside containers (default `Ctrl-a` to avoid conflict with host `Ctrl-b`) |
+| `TRUSTY_CAGE_AUTO_REBUILD`      | `true`    | Auto-rebuild the Docker image when the Dockerfile has changed; set `false` to only warn   |
 | `ANTHROPIC_API_KEY`             | _(none)_  | API key for Claude Code (required for `api_key` auth mode)                                |
 
 Run `trusty-cage init` to create `~/.trusty-cage/.env` with a commented template you can customize.
@@ -300,7 +358,7 @@ If you set `TRUSTY_CAGE_DOTFILES_REPO`, your dotfiles are automatically applied 
 
 This means your shell config, tmux settings, Neovim config, aliases, and other personalizations carry over — the container feels like your own machine.
 
-**Without dotfiles**, the container ships with sensible defaults: oh-my-zsh (robbyrussell theme), LazyVim starter config, pyenv on PATH, and `vim`/`vi` aliased to `nvim`. Everything works out of the box, just without your personal customizations.
+**Without dotfiles**, the container ships with sensible defaults: oh-my-zsh (robbyrussell theme), LazyVim starter config, pyenv on PATH, `uv` (Astral's Python package manager) preinstalled, and `vim`/`vi` aliased to `nvim`. Everything works out of the box, just without your personal customizations.
 
 ## Authentication
 
@@ -398,7 +456,7 @@ tc logs myproject -f --raw
 tc launch myproject --prompt-file /path/to/prompt.txt --background
 
 # Poll for completion (blocks until task_complete arrives)
-tc outbox myproject --poll --timeout 1800
+tc outbox myproject --poll --timeout 1800 --max-interval 300
 
 # Or read outbox messages manually
 tc outbox myproject --all --json
@@ -430,6 +488,17 @@ DONE Script created and working.
 ```
 
 Use `--raw` for the full stream-json output. Use `-f` / `--follow` to tail in real-time.
+
+### Adaptive polling with `tc outbox --poll`
+
+When polling a long-running cage, `--poll` starts at `--interval` seconds (default 30) but lengthens the interval after three consecutive idle polls — growing by 1.5× per cycle up to `--max-interval` (default 300s). Any new message resets the interval back to the floor, so responsiveness is preserved when the inner agent is actively producing output. Short cages that emit messages frequently never cross the idle threshold and behave exactly like fixed-interval polling.
+
+### Diagnose and Salvage
+
+Two commands for when something goes sideways inside a cage:
+
+- **`tc diagnose <name>`** runs a quick sweep and prints a report: is the inner Claude process alive, zombie, or exited? how many messages are in the outbox and what was the most recent one? what does `git status` look like inside the cage? what are the last few lines of the stream log? Use this when you're not sure whether the cage is working, stuck, or done. Pass `--json` for scripted consumers. Safe to run against stopped or missing cages. `tc outbox --poll` auto-runs diagnose on timeout unless `--no-diagnose` is passed.
+- **`tc salvage <name>`** rescues work from a cage that didn't reach `task_complete`. Internally it runs `tc diagnose`, warns on suspicious states (alive inner, stopped container, clean git), and then exports whatever is in the cage into the current directory (or `--output-dir`). Unlike `tc destroy`, salvage intentionally **preserves** the cage so you can poke around — run `tc destroy <name>` yourself once you've got what you need.
 
 ### `cage-send` (Inside the Container)
 
@@ -563,4 +632,3 @@ make help
 ## License
 
 MIT
-test

@@ -232,3 +232,89 @@ class TestRenderStatsTable:
         render_stats_table(stats, used_cloc=True)
         output = capsys.readouterr().out
         assert "via cloc" in output
+
+
+class TestGitignoreAwareStats:
+    """Regression suite: stats must not count files ignored by .gitignore
+    or the trusty-cage default cache patterns (motivated by cage runs where
+    27MB of .mypy_cache pollution inflated the reported count by 200×)."""
+
+    def _dirs(self, tmp_path):
+        before = tmp_path / "before"
+        after = tmp_path / "after"
+        before.mkdir()
+        after.mkdir()
+        return before, after
+
+    def test_cache_dir_is_not_counted(self, mocker, tmp_path):
+        """.mypy_cache/ is in DEFAULT_CACHE_PATTERNS; stats must skip it."""
+        mocker.patch("trusty_cage.stats.shutil.which", return_value=None)
+        before, after = self._dirs(tmp_path)
+        # Real deliverable: 2 lines in app.py
+        (after / "app.py").write_text("a\nb\n")
+        # Noise: 1000 lines in .mypy_cache/
+        cache = after / ".mypy_cache"
+        cache.mkdir()
+        (cache / "junk.txt").write_text("\n".join(str(i) for i in range(1000)) + "\n")
+
+        stats, _used_cloc = compute_stats(before, after)
+        total = sum(s.lines_added for s in stats)
+        assert total == 2, f"stats should ignore .mypy_cache contents, got {stats}"
+
+    def test_gitignore_entry_excluded(self, mocker, tmp_path):
+        """A 1000-line file ignored by .gitignore should not be counted."""
+        mocker.patch("trusty_cage.stats.shutil.which", return_value=None)
+        before, after = self._dirs(tmp_path)
+        (after / ".gitignore").write_text("generated.txt\n")
+        (after / "app.py").write_text("x\n")
+        (after / "generated.txt").write_text(
+            "\n".join(str(i) for i in range(1000)) + "\n"
+        )
+
+        stats, _ = compute_stats(before, after)
+        # Only the app.py addition (1 line) + the .gitignore itself should count
+        total = sum(s.lines_added for s in stats)
+        assert total < 10, (
+            f"stats should ignore 'generated.txt' (in .gitignore), got {total}"
+        )
+
+    def test_untracked_non_ignored_file_counted(self, mocker, tmp_path):
+        """A normal file not matching any ignore pattern must still count."""
+        mocker.patch("trusty_cage.stats.shutil.which", return_value=None)
+        before, after = self._dirs(tmp_path)
+        (after / ".gitignore").write_text("build/\n")
+        (after / "app.py").write_text("line1\nline2\nline3\n")
+
+        stats, _ = compute_stats(before, after)
+        py = [s for s in stats if s.language == "Python"]
+        assert py and py[0].lines_added == 3
+
+    def test_ignored_on_one_side_union_semantics(self, mocker, tmp_path):
+        """If .gitignore on either side ignores a path, stats must skip it."""
+        mocker.patch("trusty_cage.stats.shutil.which", return_value=None)
+        before, after = self._dirs(tmp_path)
+        # Only the BEFORE side has a .gitignore mentioning secret.txt
+        (before / ".gitignore").write_text("secret.txt\n")
+        (before / "app.py").write_text("a\n")
+        (after / "app.py").write_text("a\nb\n")
+        # secret.txt appears on after with many lines — should still be ignored
+        (after / "secret.txt").write_text("\n".join("x" for _ in range(200)) + "\n")
+
+        stats, _ = compute_stats(before, after)
+        total_added = sum(s.lines_added for s in stats)
+        # Only the 1-line addition to app.py should count
+        assert total_added <= 2, (
+            f"ignored on before-side should still exclude secret.txt, got {total_added}"
+        )
+
+    def test_include_cache_true_counts_caches(self, mocker, tmp_path):
+        """include_cache=True should bring .mypy_cache back into the count."""
+        mocker.patch("trusty_cage.stats.shutil.which", return_value=None)
+        before, after = self._dirs(tmp_path)
+        cache = after / ".mypy_cache"
+        cache.mkdir()
+        (cache / "junk.txt").write_text("a\nb\nc\n")
+
+        stats, _ = compute_stats(before, after, include_cache=True)
+        total = sum(s.lines_added for s in stats)
+        assert total >= 3, f"include_cache=True should count cache dirs, got {total}"

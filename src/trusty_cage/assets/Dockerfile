@@ -86,12 +86,22 @@ RUN echo 'export ZSH="$HOME/.oh-my-zsh"' > /home/trustycage/.zshrc \
 
 # Install pyenv + Python
 ENV PYENV_ROOT="/home/trustycage/.pyenv"
-ENV PATH="${PYENV_ROOT}/bin:${PYENV_ROOT}/shims:${PATH}"
+# Put uv's install location (/home/trustycage/.local/bin) on the global PATH so
+# it's visible to every shell, not just interactive zsh. Non-interactive
+# bash/zsh invocations (docker exec, CI scripts, inner-agent shell commands)
+# don't source ~/.zshrc, so the PATH export there wouldn't help them.
+ENV PATH="${PYENV_ROOT}/bin:${PYENV_ROOT}/shims:/home/trustycage/.local/bin:${PATH}"
 
 RUN git clone --depth 1 https://github.com/pyenv/pyenv.git "${PYENV_ROOT}" \
     && pyenv install "${PYTHON_VERSION}" \
     && pyenv global "${PYTHON_VERSION}" \
     && pyenv rehash
+
+# Install uv (Astral's Python package manager). The test -x guard catches
+# silent installer failures (network blip, partial install) before they
+# become late-stage surprises for inner agents.
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && test -x "$HOME/.local/bin/uv"
 
 # Setup LazyVim starter config
 RUN git clone --depth 1 https://github.com/LazyVim/starter /home/trustycage/.config/nvim \

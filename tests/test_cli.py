@@ -51,6 +51,68 @@ class TestCreateCommand:
         )
         assert result.exit_code != 0
 
+    def test_stale_env_dir_warning_reflects_preserved_state(
+        self, mocker, mock_trusty_cage_dir
+    ):
+        """
+        Regression: the cleanup message on re-create should use neutral
+        'preserved env directory' language (post-0.10.0 default destroy
+        purges by default, so this only fires when the user explicitly
+        preserved state via --keep-host-clone or a prior create was
+        interrupted). The old alarming 'Warning: Cleaning up stale
+        environment directory' wording is no longer accurate.
+        """
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.build_if_needed", return_value=False)
+        mocker.patch(f"{CLI}.container_exists", return_value=False)
+        mocker.patch(f"{CLI}.volume_exists", return_value=False)
+        mocker.patch(f"{CLI}.volume_create")
+        mocker.patch(f"{CLI}.container_create")
+        mocker.patch(f"{CLI}.container_start")
+        mocker.patch(f"{CLI}.copy_to_container")
+        mocker.patch(f"{CLI}.container_exec")
+        mocker.patch(f"{CLI}.init_messaging_dirs")
+        mocker.patch(f"{CLI}.env_exists", return_value=False)
+
+        # Leave a preserved env dir on disk (simulates post-destroy state
+        # when --keep-host-clone was passed, or an interrupted earlier create)
+        from trusty_cage.environment import get_env_dir
+
+        env_dir = get_env_dir("hello-world")
+        env_dir.mkdir(parents=True, exist_ok=True)
+        (env_dir / "leftover.txt").write_text("old")
+
+        def fake_clone(*args, **kwargs):
+            cmd = args[0] if args else kwargs.get("args", [])
+            clone_dest = cmd[-1]
+            from pathlib import Path
+
+            dest = Path(clone_dest)
+            dest.mkdir(parents=True, exist_ok=True)
+            (dest / "README.md").write_text("# Hello")
+            (dest / ".git").mkdir()
+            return subprocess.CompletedProcess(cmd, 0)
+
+        mocker.patch(f"{CLI}.subprocess.run", side_effect=fake_clone)
+
+        result = runner.invoke(
+            app,
+            [
+                "create",
+                "https://github.com/octocat/Hello-World",
+                "--no-attach",
+                "--auth-mode",
+                "api_key",
+            ],
+        )
+        assert result.exit_code == 0
+        # New wording is present
+        assert "preserved env directory" in result.output
+        # Old alarming wording is gone
+        assert "stale environment directory" not in result.output
+        # Message cites why
+        assert "keep-host-clone" in result.output or "interrupted" in result.output
+
     def test_create_with_auth_mode_flag_skips_prompt(
         self, mocker, mock_trusty_cage_dir, tmp_path
     ):
@@ -2613,3 +2675,270 @@ class TestInboxCommand:
         )
         assert result.exit_code != 0
         assert "Invalid JSON" in result.output
+
+
+class TestPatchCommand:
+    def _setup(self, mocker, mock_trusty_cage_dir, n_commits: int = 2):
+        create_meta(name="myenv", repo_url="https://a.com/r", auth_mode="api_key")
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+
+        # Ordered side_effect for container_exec:
+        # 1. git rev-parse --verify (base ref check)
+        # 2. git rev-list --count  → returns n_commits
+        # 3. git format-patch ...  → happy path for file-based or --stdout
+        # 4. rm -rf cleanup (file-based path only)
+        def exec_side_effect(*args, **kwargs):
+            command = args[1] if len(args) > 1 else kwargs.get("command", [])
+            if "rev-parse" in command:
+                return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+            if "rev-list" in command:
+                return subprocess.CompletedProcess(
+                    command, 0, stdout=f"{n_commits}\n", stderr=""
+                )
+            if "format-patch" in command:
+                return subprocess.CompletedProcess(
+                    command, 0, stdout="FAKE PATCH CONTENT\n", stderr=""
+                )
+            # rm -rf cleanup
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+        mocker.patch(f"{CLI}.container_exec", side_effect=exec_side_effect)
+        mocker.patch(f"{CLI}.copy_from_container")
+        return mocker
+
+    def test_fails_when_env_not_found(self, mocker, mock_trusty_cage_dir):
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        result = runner.invoke(app, ["patch", "nonexistent"])
+        assert result.exit_code != 0
+        assert "not found" in result.output
+
+    def test_rejects_stdout_with_output_dir(self, mocker, mock_trusty_cage_dir):
+        create_meta(name="myenv", repo_url="https://a.com/r", auth_mode="api_key")
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        result = runner.invoke(
+            app, ["patch", "myenv", "--stdout", "--output-dir", "/tmp/x"]
+        )
+        assert result.exit_code != 0
+        assert "mutually exclusive" in result.output
+
+    def test_happy_path_writes_files(self, mocker, mock_trusty_cage_dir, tmp_path):
+        self._setup(mocker, mock_trusty_cage_dir, n_commits=3)
+        out = tmp_path / "patches"
+        result = runner.invoke(app, ["patch", "myenv", "--output-dir", str(out)])
+        assert result.exit_code == 0, result.output
+        assert "Wrote 3 patch file(s)" in result.output
+        assert "patches" in result.output
+        # Output directory should exist
+        assert out.exists()
+
+    def test_stdout_mode_streams_patch(self, mocker, mock_trusty_cage_dir):
+        self._setup(mocker, mock_trusty_cage_dir, n_commits=1)
+        result = runner.invoke(app, ["patch", "myenv", "--stdout"])
+        assert result.exit_code == 0
+        assert "FAKE PATCH CONTENT" in result.output
+
+    def test_no_commits_ahead_exits_zero(self, mocker, mock_trusty_cage_dir):
+        self._setup(mocker, mock_trusty_cage_dir, n_commits=0)
+        result = runner.invoke(app, ["patch", "myenv"])
+        assert result.exit_code == 0
+        assert "No commits ahead" in result.output
+
+    def test_bad_base_ref_exits_nonzero(self, mocker, mock_trusty_cage_dir):
+        create_meta(name="myenv", repo_url="https://a.com/r", auth_mode="api_key")
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+
+        def exec_side_effect(*args, **kwargs):
+            command = args[1] if len(args) > 1 else kwargs.get("command", [])
+            if "rev-parse" in command:
+                return subprocess.CompletedProcess(
+                    command, 128, stdout="", stderr="fatal: bad revision\n"
+                )
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+        mocker.patch(f"{CLI}.container_exec", side_effect=exec_side_effect)
+
+        result = runner.invoke(app, ["patch", "myenv", "--base", "nope"])
+        assert result.exit_code != 0
+        assert "base ref 'nope' not found" in result.output
+
+
+class TestTidyCommand:
+    def _setup(
+        self,
+        mocker,
+        mock_trusty_cage_dir,
+        found: list[str] | None = None,
+    ):
+        create_meta(name="myenv", repo_url="https://a.com/r", auth_mode="api_key")
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+        found = found if found is not None else []
+        exec_mock = mocker.patch(
+            f"{CLI}.container_exec",
+            return_value=subprocess.CompletedProcess(
+                [], 0, stdout="\n".join(found) + ("\n" if found else ""), stderr=""
+            ),
+        )
+        return exec_mock
+
+    def test_fails_when_env_not_found(self, mocker, mock_trusty_cage_dir):
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        result = runner.invoke(app, ["tidy", "nonexistent"])
+        assert result.exit_code != 0
+
+    def test_default_paths_invoked(self, mocker, mock_trusty_cage_dir):
+        exec_mock = self._setup(
+            mocker,
+            mock_trusty_cage_dir,
+            found=["/home/trustycage/project/.mypy_cache"],
+        )
+        result = runner.invoke(app, ["tidy", "myenv"])
+        assert result.exit_code == 0, result.output
+        listing_call = exec_mock.call_args_list[0]
+        cmd = listing_call.args[1]
+        for p in [".mypy_cache", ".pytest_cache", ".ruff_cache", "__pycache__"]:
+            assert p in cmd
+        assert "Removed" in result.output
+        assert ".mypy_cache" in result.output
+
+    def test_custom_paths_override_defaults(self, mocker, mock_trusty_cage_dir):
+        exec_mock = self._setup(mocker, mock_trusty_cage_dir)
+        result = runner.invoke(
+            app, ["tidy", "myenv", "--paths", "dist", "--paths", "build"]
+        )
+        assert result.exit_code == 0
+        cmd = exec_mock.call_args_list[0].args[1]
+        assert "dist" in cmd
+        assert "build" in cmd
+        assert ".mypy_cache" not in cmd
+
+    def test_dry_run_does_not_call_rm(self, mocker, mock_trusty_cage_dir):
+        exec_mock = self._setup(
+            mocker, mock_trusty_cage_dir, found=["/home/trustycage/project/.ruff_cache"]
+        )
+        result = runner.invoke(app, ["tidy", "myenv", "--dry-run"])
+        assert result.exit_code == 0
+        assert "Would remove" in result.output
+        assert exec_mock.call_count == 1
+
+    def test_no_matches_prints_dim_message(self, mocker, mock_trusty_cage_dir):
+        self._setup(mocker, mock_trusty_cage_dir, found=[])
+        result = runner.invoke(app, ["tidy", "myenv"])
+        assert result.exit_code == 0
+        assert "No matching" in result.output
+
+    def test_rejects_wildcard_paths(self, mocker, mock_trusty_cage_dir):
+        """Regression guard: find -name interprets `*` as a glob and would
+        match every directory, causing rm -rf of the whole cage project."""
+        create_meta(name="myenv", repo_url="https://a.com/r", auth_mode="api_key")
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        exec_mock = mocker.patch(f"{CLI}.container_exec")
+
+        for bad in ["*", "?", ".*", "[a-z]", "src/app"]:
+            result = runner.invoke(app, ["tidy", "myenv", "--paths", bad])
+            assert result.exit_code != 0, f"expected reject for --paths {bad!r}"
+            assert "directory basename" in result.output
+        # Critical: container_exec must NOT be called — we rejected before exec
+        assert not exec_mock.called
+
+    def test_rejects_empty_string_path(self, mocker, mock_trusty_cage_dir):
+        create_meta(name="myenv", repo_url="https://a.com/r", auth_mode="api_key")
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_exec")
+        result = runner.invoke(app, ["tidy", "myenv", "--paths", ""])
+        assert result.exit_code != 0
+        assert "directory basename" in result.output
+
+
+class TestExportTidyIntegration:
+    def _common(self, mocker):
+        create_meta(name="myenv", repo_url="https://a.com/r", auth_mode="api_key")
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+        mocker.patch(f"{CLI}.copy_from_container")
+        mocker.patch(f"{CLI}.subprocess.run")
+        return mocker.patch(f"{CLI}._tidy_impl", return_value=[])
+
+    def test_export_auto_tidies_by_default(self, mocker, mock_trusty_cage_dir):
+        tidy_mock = self._common(mocker)
+        result = runner.invoke(app, ["export", "myenv", "--yes"])
+        assert result.exit_code == 0
+        assert tidy_mock.called
+
+    def test_export_no_tidy_skips_tidy(self, mocker, mock_trusty_cage_dir):
+        tidy_mock = self._common(mocker)
+        result = runner.invoke(app, ["export", "myenv", "--yes", "--no-tidy"])
+        assert result.exit_code == 0
+        assert not tidy_mock.called
+
+    def test_export_include_cache_skips_tidy(self, mocker, mock_trusty_cage_dir):
+        tidy_mock = self._common(mocker)
+        result = runner.invoke(app, ["export", "myenv", "--yes", "--include-cache"])
+        assert result.exit_code == 0
+        assert not tidy_mock.called
+
+
+class TestAdaptivePollInterval:
+    def test_reset_on_messages(self):
+        from trusty_cage.cli import _next_poll_interval
+
+        # idle_polls=0 means messages just arrived — snap back to base
+        assert _next_poll_interval(200.0, 0, 30.0, 300.0) == 30.0
+
+    def test_below_threshold_holds(self):
+        from trusty_cage.cli import _next_poll_interval
+
+        assert _next_poll_interval(30.0, 1, 30.0, 300.0) == 30.0
+        assert _next_poll_interval(30.0, 2, 30.0, 300.0) == 30.0
+
+    def test_grows_at_threshold(self):
+        from trusty_cage.cli import _next_poll_interval
+
+        # At threshold (3): 30 * 1.5 = 45
+        assert _next_poll_interval(30.0, 3, 30.0, 300.0) == 45.0
+
+    def test_continues_growing(self):
+        from trusty_cage.cli import _next_poll_interval
+
+        assert _next_poll_interval(45.0, 4, 30.0, 300.0) == 67.5
+        assert _next_poll_interval(67.5, 5, 30.0, 300.0) == 101.25
+
+    def test_clamps_to_max(self):
+        from trusty_cage.cli import _next_poll_interval
+
+        # 250 * 1.5 = 375 → clamped to 300
+        assert _next_poll_interval(250.0, 5, 30.0, 300.0) == 300.0
+        # At max already — stays at max
+        assert _next_poll_interval(300.0, 6, 30.0, 300.0) == 300.0
+
+    def test_never_below_base(self):
+        from trusty_cage.cli import _next_poll_interval
+
+        # Defensive: if current somehow drifts below base, floor to base
+        assert _next_poll_interval(10.0, 1, 30.0, 300.0) == 30.0
+
+    def test_rejects_bad_max_interval(self, mocker, mock_trusty_cage_dir):
+        create_meta(name="myenv", repo_url="https://a.com/r", auth_mode="api_key")
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.container_exists", return_value=True)
+        mocker.patch(f"{CLI}.container_is_running", return_value=True)
+
+        result = runner.invoke(
+            app,
+            [
+                "outbox",
+                "myenv",
+                "--poll",
+                "--interval",
+                "60",
+                "--max-interval",
+                "30",
+                "--timeout",
+                "1",
+            ],
+        )
+        assert result.exit_code != 0
+        assert "--max-interval" in result.output
+        assert "--interval" in result.output
