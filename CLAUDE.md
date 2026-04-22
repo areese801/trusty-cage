@@ -130,6 +130,7 @@ Terminal testing catches issues that unit tests with mocked Docker calls miss (a
 - Merges to `main` are done via PR on GitHub — never merge locally
 - Push the feature branch and open a PR
 - **Before opening a PR, update `CHANGELOG.md`** with an entry for the change (under the upcoming release, or a new version heading if cutting a release). User-facing changes must appear in the changelog.
+- **Before opening a PR, run the `readme-audit` skill** to confirm `README.md` still matches the surface (CLI commands, flags, behavior) the PR touches. Fix anything drifted in the same PR. For trivial PRs (tests-only, docs-only, internal refactor) a one-line "readme-audit: no user-visible surface changed" in the PR description is enough.
 
 ## Release Workflow
 
