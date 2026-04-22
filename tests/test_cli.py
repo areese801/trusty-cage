@@ -51,6 +51,68 @@ class TestCreateCommand:
         )
         assert result.exit_code != 0
 
+    def test_stale_env_dir_warning_reflects_preserved_state(
+        self, mocker, mock_trusty_cage_dir
+    ):
+        """
+        Regression: the cleanup message on re-create should use neutral
+        'preserved env directory' language (post-0.10.0 default destroy
+        purges by default, so this only fires when the user explicitly
+        preserved state via --keep-host-clone or a prior create was
+        interrupted). The old alarming 'Warning: Cleaning up stale
+        environment directory' wording is no longer accurate.
+        """
+        mocker.patch(f"{CLI}.is_docker_running", return_value=True)
+        mocker.patch(f"{CLI}.build_if_needed", return_value=False)
+        mocker.patch(f"{CLI}.container_exists", return_value=False)
+        mocker.patch(f"{CLI}.volume_exists", return_value=False)
+        mocker.patch(f"{CLI}.volume_create")
+        mocker.patch(f"{CLI}.container_create")
+        mocker.patch(f"{CLI}.container_start")
+        mocker.patch(f"{CLI}.copy_to_container")
+        mocker.patch(f"{CLI}.container_exec")
+        mocker.patch(f"{CLI}.init_messaging_dirs")
+        mocker.patch(f"{CLI}.env_exists", return_value=False)
+
+        # Leave a preserved env dir on disk (simulates post-destroy state
+        # when --keep-host-clone was passed, or an interrupted earlier create)
+        from trusty_cage.environment import get_env_dir
+
+        env_dir = get_env_dir("hello-world")
+        env_dir.mkdir(parents=True, exist_ok=True)
+        (env_dir / "leftover.txt").write_text("old")
+
+        def fake_clone(*args, **kwargs):
+            cmd = args[0] if args else kwargs.get("args", [])
+            clone_dest = cmd[-1]
+            from pathlib import Path
+
+            dest = Path(clone_dest)
+            dest.mkdir(parents=True, exist_ok=True)
+            (dest / "README.md").write_text("# Hello")
+            (dest / ".git").mkdir()
+            return subprocess.CompletedProcess(cmd, 0)
+
+        mocker.patch(f"{CLI}.subprocess.run", side_effect=fake_clone)
+
+        result = runner.invoke(
+            app,
+            [
+                "create",
+                "https://github.com/octocat/Hello-World",
+                "--no-attach",
+                "--auth-mode",
+                "api_key",
+            ],
+        )
+        assert result.exit_code == 0
+        # New wording is present
+        assert "preserved env directory" in result.output
+        # Old alarming wording is gone
+        assert "stale environment directory" not in result.output
+        # Message cites why
+        assert "keep-host-clone" in result.output or "interrupted" in result.output
+
     def test_create_with_auth_mode_flag_skips_prompt(
         self, mocker, mock_trusty_cage_dir, tmp_path
     ):

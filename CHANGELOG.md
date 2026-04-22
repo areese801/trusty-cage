@@ -6,6 +6,11 @@ This project follows [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PA
 
 ---
 
+## [0.13.0] - TBD
+
+### Changed
+- **`tc create` rewords the stale-env-dir cleanup message.** Previously printed "Warning: Cleaning up stale environment directory from a previous session." Since 0.10.0's default-purge `tc destroy`, this cleanup now only fires when the user explicitly passed `--keep-host-clone` on a prior destroy or a prior `tc create` was interrupted — neither of which is really "stale". The new (non-warning) message reads: "Removing preserved env directory from a prior run (`tc destroy --keep-host-clone` or interrupted `tc create`)." The stale comment block above the code has been updated too.
+
 ## [0.12.0] - 2026-04-19
 
 ### Added

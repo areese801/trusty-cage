@@ -254,16 +254,18 @@ def create(
         rprint(f"[bold red]Error: Environment '{env_name}' already exists.[/bold red]")
         raise typer.Exit(1)
 
-    # Clean up ALL orphaned artifacts from a previous destroy.
-    # tc destroy removes container + volume + meta.json but preserves the host
-    # clone directory (so the user can grab exported work). If they then re-create
-    # with the same name, we must wipe the stale env dir — otherwise the old host
-    # clone files get copied into the fresh cage, producing "ghost work".
+    # Clean up orphaned artifacts before creating a fresh env. Since 0.10.0,
+    # `tc destroy` purges ~/.trusty-cage/envs/<name>/ by default, so this
+    # normally only fires when the user passed --keep-host-clone on a prior
+    # destroy, or when a previous `tc create` was interrupted mid-setup.
+    # Either way, wiping is safe: the host clone is either intentionally
+    # preserved (and the user can re-grab it) or partial state from a
+    # failed run.
     env_dir = get_env_dir(env_name)
     if env_dir.exists():
         rprint(
-            "[bold yellow]Warning: Cleaning up stale environment directory "
-            "from a previous session.[/bold yellow]"
+            "[yellow]Removing preserved env directory from a prior run "
+            "(`tc destroy --keep-host-clone` or interrupted `tc create`).[/yellow]"
         )
         shutil.rmtree(env_dir)
     expected_container = f"{constants.CONTAINER_PREFIX}{env_name}"
